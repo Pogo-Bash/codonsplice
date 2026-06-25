@@ -101,7 +101,8 @@ jobs:
       - name: Publish wasm + framework wrappers
         run: |
           for dir in pkg pkg/react pkg/vue pkg/svelte pkg/astro; do
-            (cd "$dir" && npm publish --access public) || echo "skip $dir"
+            echo "Publishing $dir..."
+            (cd "$dir" && npm publish --access public)
           done
 
   # ── 4. Publish crates to crates.io ─────────────────────────────────────────
