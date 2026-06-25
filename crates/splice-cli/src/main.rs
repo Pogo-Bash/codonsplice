@@ -12,6 +12,7 @@ mod directive;
 mod installer;
 mod spq;
 mod tui;
+mod update;
 
 use clap::{Parser, Subcommand};
 use codonsplice_core::{compile, disassemble, suggest_param, CompileError, Vm, VmOutput};
@@ -25,6 +26,9 @@ use codonsplice_core::{compile, disassemble, suggest_param, CompileError, Vm, Vm
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// Skip the automatic update check for this run.
+    #[arg(long, global = true)]
+    no_update: bool,
 }
 
 #[derive(Subcommand)]
@@ -37,6 +41,10 @@ enum Command {
     Check { source: String },
     /// Launch the guided TUI installer (detect environment + install).
     Install,
+    /// Check for and install the latest release of splice.
+    Update,
+    /// Remove splice (binary + PATH entries; guides npm/cargo installs).
+    Uninstall,
     /// Scaffold a new `<name>.spq` script.
     New { name: String },
     /// Run a `.spq` script, binding `$variables` from `--flag value` args.
@@ -77,6 +85,17 @@ fn main() -> std::process::ExitCode {
     }
 
     let cli = Cli::parse();
+
+    // Auto-check for updates before normal commands. Skipped for the
+    // update/uninstall/install flows (which manage versions themselves) and for
+    // the bare TUI (it shows the latest release in its own UI).
+    if !matches!(
+        cli.command,
+        None | Some(Command::Update) | Some(Command::Uninstall) | Some(Command::Install)
+    ) {
+        update::auto_check(cli.no_update);
+    }
+
     match cli.command {
         None => match tui::run() {
             Ok(()) => std::process::ExitCode::SUCCESS,
@@ -95,6 +114,8 @@ fn main() -> std::process::ExitCode {
                 std::process::ExitCode::FAILURE
             }
         },
+        Some(Command::Update) => update::cmd_update(),
+        Some(Command::Uninstall) => update::cmd_uninstall(),
         Some(Command::New { name }) => spq::cmd_new(&name),
         Some(Command::Run { file, args }) => spq::cmd_run(&file, &args),
         Some(Command::Build {
