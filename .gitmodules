@@ -1,3 +1,6 @@
 [submodule "cnvlens"]
 	path = cnvlens
 	url = https://github.com/Pogo-Bash/cnvlens
+[submodule "crates/spliceql"]
+	path = crates/spliceql
+	url = https://github.com/Pogo-Bash/spliceql
