@@ -84,11 +84,21 @@ EOF
 echo "✓ cli ready"
 
 # ── Platform packages: pkg/cli-<platform>/ ──────────────────────────────────
+SKIPPED=()
 for pkg in "${!ASSETS[@]}"; do
   asset="${ASSETS[$pkg]}"
   dir="$PKG_DIR/$pkg"
-  mkdir -p "$dir/bin"
 
+  # In local-artifacts mode, a binary that hasn't been built yet (e.g. the
+  # macOS leg still queued in CI) is skipped rather than aborting the whole
+  # run — its package can be assembled and published later from the same tag.
+  if [[ -n "${RELEASE_ARTIFACTS_DIR:-}" && ! -f "$RELEASE_ARTIFACTS_DIR/$asset" ]]; then
+    echo "⚠ skipping pkg/$pkg — $asset not present in $RELEASE_ARTIFACTS_DIR"
+    SKIPPED+=("$pkg")
+    continue
+  fi
+
+  mkdir -p "$dir/bin"
   echo "▶ assembling pkg/$pkg ($asset)…"
 
   if [[ "$asset" == *.tar.gz ]]; then
@@ -133,6 +143,11 @@ EOF
 done
 
 echo ""
+if [[ ${#SKIPPED[@]} -gt 0 ]]; then
+  echo "⚠ skipped (binary not available yet): ${SKIPPED[*]}"
+  echo "  assemble + publish these later from the same tag once built."
+  echo ""
+fi
 echo "All CLI packages ready in pkg/cli*/"
 echo "Publish with:"
 echo "  for d in pkg/cli pkg/cli-linux-x64 pkg/cli-linux-arm64 pkg/cli-darwin-x64 pkg/cli-win32-x64; do"
