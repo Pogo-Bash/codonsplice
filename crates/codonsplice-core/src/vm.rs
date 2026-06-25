@@ -1,71 +1,87 @@
 //! Stack-based virtual machine for SpliceQL bytecode.
 //!
-//! Phase 3 status: the VM fully executes the **expression** opcodes (constants,
-//! arithmetic, comparisons, short-circuit `AND`/`OR`, `NOT`, jumps) so the CLI
-//! and tests can evaluate predicates end-to-end.  The **pipeline** opcodes
-//! (`OPEN_SOURCE` … `WRITE_INTO`, `CALL_*`) are stubs that return
-//! [`VmError::NotYetImplemented`]; wiring them to `cnvlens-core` is Phase 4.
+//! Phase 4 wires the pipeline opcodes (`OPEN_SOURCE … WRITE_INTO`, `CALL_*`) to
+//! [`cnvlens_core`]: a query opens a BAM/VCF/FASTA, scans it (optionally seeking
+//! via BAI when the `WHERE` clause pins a chromosome), runs the per-record
+//! predicate, and materializes records — calling cnvlens-core's coverage /
+//! variant / read entry points for the `CALL_*` opcodes.
+//!
+//! The expression interpreter from Phase 3 is unchanged except that
+//! `LOAD_FIELD` / `GET_FIELD` are now record-aware (resolving against the
+//! current record during predicate / projection / order evaluation).
 
-use std::rc::Rc;
+use std::collections::HashMap;
+use std::io;
+use std::sync::{Arc, Mutex};
+
+use cnvlens_core::error::CoreError;
+use cnvlens_core::model::{CoverageOptions, VariantOptions};
+use cnvlens_core::{bam, coverage, reference_list, variants, AlnRecord};
+use spliceql::ast::Format;
 
 use crate::compiler::{OpCode, Program, Value};
+use crate::materialize::materialize;
+use crate::runtime::{
+    AlnRow, Cursor, Dataset, DatasetInner, QueryOptions, Record, RuntimeValue,
+};
 
-/// A value on the VM operand stack.
-///
-/// [`RuntimeValue::Pending`] is a placeholder for the `Dataset`/`Cursor`/`Record`
-/// handles that Phase 4 will introduce; it lets pipeline-op stubs leave the
-/// stack well-typed without inventing real handles yet.
-#[derive(Debug, Clone, PartialEq)]
-pub enum RuntimeValue {
-    Int(i64),
-    Float(f64),
-    Str(Rc<str>),
-    Bool(bool),
-    Null,
-    Pending,
+pub use crate::runtime::RuntimeValue as Runtime; // (kept for any external imports)
+
+// ── Host I/O abstraction ─────────────────────────────────────────────────────
+
+/// Host I/O: the native CLI reads/writes the filesystem; the WASM build serves
+/// files from the JS-provided map. Keeps `std::fs` out of the core's hot path.
+pub trait Io {
+    fn read_file(&self, path: &str) -> io::Result<Vec<u8>>;
+    /// The co-located index for `path` (`path + ".bai"`), if available.
+    fn read_sibling_index(&self, path: &str) -> Option<Vec<u8>>;
+    fn write_file(&mut self, path: &str, bytes: &[u8]) -> io::Result<()>;
 }
 
-impl RuntimeValue {
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            RuntimeValue::Int(_) => "int",
-            RuntimeValue::Float(_) => "float",
-            RuntimeValue::Str(_) => "string",
-            RuntimeValue::Bool(_) => "bool",
-            RuntimeValue::Null => "null",
-            RuntimeValue::Pending => "pending",
-        }
-    }
+/// Filesystem-backed I/O for the native CLI.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct FsIo;
 
-    fn is_truthy(&self) -> bool {
-        match self {
-            RuntimeValue::Bool(b) => *b,
-            RuntimeValue::Int(n) => *n != 0,
-            RuntimeValue::Float(x) => *x != 0.0,
-            RuntimeValue::Str(s) => !s.is_empty(),
-            RuntimeValue::Null => false,
-            RuntimeValue::Pending => true,
-        }
+#[cfg(not(target_arch = "wasm32"))]
+impl Io for FsIo {
+    fn read_file(&self, path: &str) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
     }
-
-    fn from_const(v: &Value) -> RuntimeValue {
-        match v {
-            Value::Int(n) => RuntimeValue::Int(*n),
-            Value::Float(x) => RuntimeValue::Float(*x),
-            Value::Str(s) => RuntimeValue::Str(s.clone()),
-            Value::Bool(b) => RuntimeValue::Bool(*b),
-            Value::Null => RuntimeValue::Null,
-        }
+    fn read_sibling_index(&self, path: &str) -> Option<Vec<u8>> {
+        std::fs::read(format!("{path}.bai")).ok()
+    }
+    fn write_file(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        std::fs::write(path, bytes)
     }
 }
+
+/// A no-op I/O used for record/expression evaluation (predicate, order key),
+/// which never touches files.
+pub struct NoIo;
+impl Io for NoIo {
+    fn read_file(&self, _: &str) -> io::Result<Vec<u8>> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "no I/O in eval mode"))
+    }
+    fn read_sibling_index(&self, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn write_file(&mut self, _: &str, _: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "no I/O in eval mode"))
+    }
+}
+
+// ── Runtime value re-export & output ─────────────────────────────────────────
 
 /// The result of running a program.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum VmOutput {
-    /// The program compiled and the (stubbed) pipeline reached `HALT`.
+    /// The pipeline reached `HALT` with no record stream to emit (e.g. after
+    /// `WRITE_INTO`, or an expression-only program).
     Ready(Program),
-    /// Textual output (used by `CALL_HEADER`; Phase 4 will produce real text).
+    /// Textual output (`CALL_HEADER`, or a `WRITE_INTO` summary).
     Text(String),
+    /// A materialized record stream — the common case for `CALL_*` queries.
+    Records(Vec<Record>),
 }
 
 /// A runtime error.
@@ -78,8 +94,28 @@ pub enum VmError {
         got: &'static str,
         pc: usize,
     },
-    /// A pipeline/CALL opcode that is not implemented until Phase 4.
+    /// File open / read / write failed.
+    Io(String),
+    /// A cnvlens-core data-plane error (BAM parse, region, …).
+    Core(String),
+    /// A `CALL_*` opcode was applied to a dataset of the wrong format.
+    SourceFormat {
+        expected: &'static str,
+        got: &'static str,
+    },
+    /// `INTO` a format with no writer yet.
+    UnsupportedInto(String),
+    /// A still-stubbed opcode (kept for any remaining unwired paths).
     NotYetImplemented(String),
+}
+
+impl VmError {
+    fn io(e: io::Error) -> Self {
+        VmError::Io(e.to_string())
+    }
+    fn core(e: CoreError) -> Self {
+        VmError::Core(e.to_string())
+    }
 }
 
 impl std::fmt::Display for VmError {
@@ -90,69 +126,146 @@ impl std::fmt::Display for VmError {
             VmError::TypeMismatch { expected, got, pc } => {
                 write!(f, "type mismatch at pc {pc}: expected {expected}, got {got}")
             }
-            VmError::NotYetImplemented(op) => {
-                write!(f, "opcode {op} is not implemented until Phase 4 (cnvlens bridge)")
+            VmError::Io(m) => write!(f, "io error: {m}"),
+            VmError::Core(m) => write!(f, "{m}"),
+            VmError::SourceFormat { expected, got } => {
+                write!(f, "wrong source format: expected {expected}, got {got}")
             }
+            VmError::UnsupportedInto(fmt) => write!(f, "no writer for INTO {fmt}"),
+            VmError::NotYetImplemented(op) => write!(f, "opcode {op} is not implemented"),
         }
     }
 }
 
 impl std::error::Error for VmError {}
 
+fn format_from_byte(b: u8) -> Format {
+    match b {
+        0 => Format::Bam,
+        1 => Format::Vcf,
+        2 => Format::Fasta,
+        3 => Format::Bed,
+        _ => Format::Cram,
+    }
+}
+
+fn format_label(f: &Format) -> &'static str {
+    match f {
+        Format::Bam => "bam",
+        Format::Vcf => "vcf",
+        Format::Fasta => "fasta",
+        Format::Bed => "bed",
+        Format::Cram => "cram",
+    }
+}
+
+/// Which `CALL_*` operation is running.
+#[derive(Clone, Copy)]
+enum CallKind {
+    Variants,
+    Cnv,
+    Coverage,
+    Reads,
+}
+
+// ── The VM ───────────────────────────────────────────────────────────────────
+
 /// The bytecode virtual machine.
 pub struct Vm {
     program: Program,
     stack: Vec<RuntimeValue>,
     pc: usize,
+    /// The record in scope while a per-record sub-program runs.
+    current_record: Option<Arc<Record>>,
+    /// Host I/O backend.
+    io: Box<dyn Io>,
+    /// Accumulated `SET_PARAM` key/value pairs, consumed by the next `CALL_*`.
+    pending_params: Vec<(Arc<str>, RuntimeValue)>,
+    /// Set by `WRITE_INTO`; turns `HALT` into a textual summary.
+    wrote: Option<String>,
 }
 
 impl Vm {
+    /// Default constructor: filesystem-backed I/O natively, no-op I/O on wasm
+    /// (the WASM build supplies a JS-backed I/O via [`Vm::with_io`]).
     pub fn new(program: Program) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::with_io(program, Box::new(FsIo))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::with_io(program, Box::new(NoIo))
+        }
+    }
+
+    /// Construct with an explicit I/O backend (used by the WASM build).
+    pub fn with_io(program: Program, io: Box<dyn Io>) -> Self {
         Self {
             program,
             stack: Vec::new(),
             pc: 0,
+            current_record: None,
+            io,
+            pending_params: Vec::new(),
+            wrote: None,
         }
     }
 
+    /// Construct an evaluation-only VM over a (predicate / order-key) program.
+    /// No file I/O is performed.
+    pub fn eval_only(program: Program) -> Self {
+        Self::with_io(program, Box::new(NoIo))
+    }
+
     /// Run the main program from `pc = 0`.
-    ///
-    /// Expression opcodes execute fully; the first pipeline/CALL opcode returns
-    /// [`VmError::NotYetImplemented`].  Reaching `HALT` (or the end of code)
-    /// yields [`VmOutput::Ready`].
     pub fn run(&mut self) -> Result<VmOutput, VmError> {
         let code = self.program.code.clone();
         loop {
             if self.pc >= code.len() {
-                return Ok(VmOutput::Ready(self.program.clone()));
+                return self.finish();
             }
             let byte = code[self.pc];
             let op = OpCode::from_byte(byte).ok_or(VmError::UnknownOpcode(byte, self.pc))?;
             match op {
-                OpCode::Halt => return Ok(VmOutput::Ready(self.program.clone())),
-                // Pipeline + CALL opcodes are stubbed until Phase 4.
-                OpCode::OpenSource
-                | OpCode::Scan
-                | OpCode::Filter
-                | OpCode::Project
-                | OpCode::SetParam
-                | OpCode::OrderBy
-                | OpCode::Limit
-                | OpCode::WriteInto
-                | OpCode::CallVariants
-                | OpCode::CallCnv
-                | OpCode::CallCoverage
-                | OpCode::CallReads
-                | OpCode::CallHeader => {
-                    return Err(VmError::NotYetImplemented(op.name().to_string()))
-                }
+                OpCode::Halt => return self.finish(),
+                OpCode::OpenSource => self.op_open_source()?,
+                OpCode::Scan => self.op_scan()?,
+                OpCode::Filter => self.op_filter()?,
+                OpCode::Project => self.op_project()?,
+                OpCode::SetParam => self.op_set_param()?,
+                OpCode::OrderBy => self.op_order_by()?,
+                OpCode::Limit => self.op_limit()?,
+                OpCode::WriteInto => self.op_write_into()?,
+                OpCode::CallVariants => self.op_call(CallKind::Variants)?,
+                OpCode::CallCnv => self.op_call(CallKind::Cnv)?,
+                OpCode::CallCoverage => self.op_call(CallKind::Coverage)?,
+                OpCode::CallReads => self.op_call(CallKind::Reads)?,
+                OpCode::CallHeader => self.op_call_header()?,
                 _ => self.exec_expr(op)?,
             }
         }
     }
 
-    /// Evaluate an expression-only program (as produced by
-    /// [`crate::compile_expr`]) and return the value left on top of the stack.
+    /// What to return at `HALT`.
+    fn finish(&mut self) -> Result<VmOutput, VmError> {
+        if let Some(summary) = self.wrote.take() {
+            return Ok(VmOutput::Text(summary));
+        }
+        match self.stack.last().cloned() {
+            Some(RuntimeValue::Cursor(cursor)) => {
+                let records = materialize(cursor, "").map_err(VmError::core)?;
+                Ok(VmOutput::Records(records))
+            }
+            Some(RuntimeValue::Record(r)) => match &*r {
+                Record::Header(refs) => Ok(VmOutput::Text(format_header(refs))),
+                _ => Ok(VmOutput::Ready(self.program.clone())),
+            },
+            _ => Ok(VmOutput::Ready(self.program.clone())),
+        }
+    }
+
+    /// Evaluate an expression-only program and return the top-of-stack value.
     pub fn eval_expr(&mut self) -> Result<RuntimeValue, VmError> {
         let code = self.program.code.clone();
         loop {
@@ -187,11 +300,357 @@ impl Vm {
             .ok_or(VmError::StackUnderflow(self.pc))
     }
 
-    // ── Expression interpreter ───────────────────────────────────────────────
+    /// Evaluate the (already-loaded) program against `record` from `pc = 0`,
+    /// returning the top-of-stack value. Used by [`crate::materialize`] for the
+    /// per-record predicate and order-key sub-programs.
+    pub fn eval_record(&mut self, record: Arc<Record>) -> Result<RuntimeValue, VmError> {
+        self.pc = 0;
+        self.stack.clear();
+        self.current_record = Some(record);
+        let v = self.eval_expr();
+        self.current_record = None;
+        v
+    }
+
+    // ── Pipeline opcodes ─────────────────────────────────────────────────────
+
+    fn op_open_source(&mut self) -> Result<(), VmError> {
+        self.pc += 1;
+        let fmt = format_from_byte(self.read_u8());
+        let path_idx = self.read_u16();
+        let path = self.const_str(path_idx).to_string();
+        let bytes = self.io.read_file(&path).map_err(VmError::io)?;
+
+        let data = match fmt {
+            Format::Bam => {
+                let bai = self.io.read_sibling_index(&path).map(Arc::new);
+                DatasetInner::Bam {
+                    bytes: Arc::new(bytes),
+                    bai,
+                }
+            }
+            Format::Vcf => DatasetInner::Vcf {
+                bytes: Arc::new(bytes),
+            },
+            Format::Bed => DatasetInner::Bed {
+                bytes: Arc::new(bytes),
+            },
+            Format::Fasta => DatasetInner::Fasta {
+                seqs: parse_fasta(&bytes),
+            },
+            Format::Cram => {
+                return Err(VmError::UnsupportedInto("cram (no reader)".to_string()))
+            }
+        };
+        let dataset = Dataset {
+            format: fmt,
+            path,
+            data,
+        };
+        self.stack.push(RuntimeValue::Dataset(Arc::new(dataset)));
+        Ok(())
+    }
+
+    fn op_scan(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let ds = match self.pop(pc0)? {
+            RuntimeValue::Dataset(d) => d,
+            other => {
+                return Err(VmError::TypeMismatch {
+                    expected: "dataset",
+                    got: other.type_name(),
+                    pc: pc0,
+                })
+            }
+        };
+        let region = self.program.region.clone();
+        let cursor = Cursor::new(ds, region);
+        self.stack
+            .push(RuntimeValue::Cursor(Arc::new(Mutex::new(cursor))));
+        Ok(())
+    }
+
+    fn op_filter(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let off = self.read_u16() as usize;
+        let len = self.read_u16() as usize;
+        let pred = self.extract_subprogram(off, len);
+        let cursor = self.peek_cursor(pc0)?;
+        cursor.lock().unwrap().predicate = Some(pred);
+        Ok(())
+    }
+
+    fn op_project(&mut self) -> Result<(), VmError> {
+        self.pc += 1;
+        // Read the projection table offset. Phase 4 stores the projection but
+        // applies it as identity (SELECT * semantics); column projection to an
+        // arbitrary row type is deferred (see materialize docs).
+        let _table_off = self.read_u16();
+        Ok(())
+    }
+
+    fn op_set_param(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let key_idx = self.read_u16();
+        let key = self.const_str(key_idx);
+        let value = self.pop(pc0)?;
+        self.pending_params.push((key, value));
+        Ok(())
+    }
+
+    fn op_order_by(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let table_off = self.read_u16() as usize;
+        // Table: [u16 count][per item: u16 expr_off, u16 expr_len, u8 dir].
+        // Phase 4 sorts by the first key.
+        let code = &self.program.code;
+        let count = u16::from_le_bytes([code[table_off], code[table_off + 1]]) as usize;
+        if count > 0 {
+            let item = table_off + 2;
+            let expr_off = u16::from_le_bytes([code[item], code[item + 1]]) as usize;
+            let expr_len = u16::from_le_bytes([code[item + 2], code[item + 3]]) as usize;
+            let desc = code[item + 4] != 0;
+            let key_prog = self.extract_subprogram(expr_off, expr_len);
+            let cursor = self.peek_cursor(pc0)?;
+            cursor.lock().unwrap().order = Some((key_prog, desc));
+        }
+        Ok(())
+    }
+
+    fn op_limit(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let count = match self.pop(pc0)? {
+            RuntimeValue::Int(n) => n,
+            other => {
+                return Err(VmError::TypeMismatch {
+                    expected: "int",
+                    got: other.type_name(),
+                    pc: pc0,
+                })
+            }
+        };
+        let cursor = self.peek_cursor(pc0)?;
+        cursor.lock().unwrap().limit = Some(count);
+        Ok(())
+    }
+
+    fn op_call(&mut self, kind: CallKind) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let cursor = self.peek_cursor(pc0)?;
+        let (ds, region) = {
+            let c = cursor.lock().unwrap();
+            (c.dataset.clone(), c.region.clone())
+        };
+
+        let (records, options) = match kind {
+            CallKind::Variants => {
+                let opts = self.build_variant_options();
+                let bytes = self.require_bam(&ds, "variants")?;
+                let vars = match (&region, ds.bai_bytes()) {
+                    (Some(r), Some(bai)) => {
+                        variants::call_variants_region(bytes, bai, &r.to_core(), &opts)
+                    }
+                    _ => variants::collect_variants(bytes, None, &opts),
+                }
+                .map_err(VmError::core)?;
+                (
+                    vars.into_iter().map(Record::Variant).collect::<Vec<_>>(),
+                    QueryOptions::Variant(opts),
+                )
+            }
+            CallKind::Cnv | CallKind::Coverage => {
+                let opts = self.build_coverage_options();
+                let bytes = self.require_bam(&ds, "coverage")?;
+                let windows = match (&region, ds.bai_bytes()) {
+                    (Some(r), Some(bai)) => {
+                        coverage::analyze_coverage_region(bytes, bai, &r.to_core(), &opts)
+                    }
+                    _ => coverage::coverage_windows(bytes, None, &opts),
+                }
+                .map_err(VmError::core)?;
+                (
+                    windows
+                        .into_iter()
+                        .map(Record::CoverageWindow)
+                        .collect::<Vec<_>>(),
+                    QueryOptions::Coverage(opts),
+                )
+            }
+            CallKind::Reads => {
+                let bytes = self.require_bam(&ds, "reads")?;
+                let recs = collect_read_records(bytes, ds.bai_bytes(), &region)?;
+                (recs, QueryOptions::Reads)
+            }
+        };
+
+        let mut c = cursor.lock().unwrap();
+        c.records = Some(records);
+        c.options = options;
+        Ok(())
+    }
+
+    fn op_call_header(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let ds = match self.pop(pc0)? {
+            RuntimeValue::Cursor(c) => c.lock().unwrap().dataset.clone(),
+            RuntimeValue::Dataset(d) => d,
+            other => {
+                return Err(VmError::TypeMismatch {
+                    expected: "dataset",
+                    got: other.type_name(),
+                    pc: pc0,
+                })
+            }
+        };
+        let bytes = self.require_bam(&ds, "header")?;
+        let header = bam::read_header(bytes).map_err(VmError::io)?;
+        let refs = reference_list(&header);
+        self.stack
+            .push(RuntimeValue::Record(Arc::new(Record::Header(refs))));
+        Ok(())
+    }
+
+    fn op_write_into(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let fmt = format_from_byte(self.read_u8());
+        let path_idx = self.read_u16();
+        let path = self.const_str(path_idx).to_string();
+
+        let cursor = match self.pop(pc0)? {
+            RuntimeValue::Cursor(c) => c,
+            other => {
+                return Err(VmError::TypeMismatch {
+                    expected: "cursor",
+                    got: other.type_name(),
+                    pc: pc0,
+                })
+            }
+        };
+        let records = materialize(cursor, "").map_err(VmError::core)?;
+        let bytes = serialize_records(fmt.clone(), &records)?;
+        self.io.write_file(&path, &bytes).map_err(VmError::io)?;
+        self.wrote = Some(format!(
+            "wrote {} record(s) to {} ({})",
+            records.len(),
+            path,
+            format_label(&fmt)
+        ));
+        Ok(())
+    }
+
+    // ── Option building from SET_PARAM accumulator ───────────────────────────
+
+    fn build_variant_options(&self) -> VariantOptions {
+        let mut o = VariantOptions::default();
+        for (key, val) in &self.pending_params {
+            match key.as_ref() {
+                "min_depth" => o.min_depth = as_i64(val).unwrap_or(o.min_depth),
+                "min_base_quality" => {
+                    o.min_base_quality = as_i64(val).unwrap_or(o.min_base_quality as i64) as u8
+                }
+                "min_mapping_quality" => {
+                    o.min_mapping_quality = as_i64(val).unwrap_or(o.min_mapping_quality as i64) as u8
+                }
+                "min_variant_reads" => {
+                    o.min_variant_reads = as_i64(val).unwrap_or(o.min_variant_reads)
+                }
+                "min_allele_freq" => o.min_allele_freq = as_f64(val).unwrap_or(o.min_allele_freq),
+                "min_strand_bias" => o.min_strand_bias = as_f64(val).unwrap_or(o.min_strand_bias),
+                _ => {}
+            }
+        }
+        o
+    }
+
+    fn build_coverage_options(&self) -> CoverageOptions {
+        let mut o = CoverageOptions::default();
+        o.window_size = 10_000;
+        for (key, val) in &self.pending_params {
+            match key.as_ref() {
+                "window_size" => {
+                    if let Some(n) = as_i64(val) {
+                        o.window_size = n.max(1) as u32;
+                    }
+                }
+                "amp_threshold" => {
+                    o.amp_threshold = as_f64(val);
+                    o.use_manual_thresholds = true;
+                }
+                "del_threshold" => {
+                    o.del_threshold = as_f64(val);
+                    o.use_manual_thresholds = true;
+                }
+                "min_windows" => o.min_windows = as_i64(val).map(|n| n.max(0) as usize),
+                "segmentation_method" => {
+                    if let RuntimeValue::Str(s) = val {
+                        o.segmentation_method = Some(s.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        o
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn require_bam<'a>(
+        &self,
+        ds: &'a Dataset,
+        op: &'static str,
+    ) -> Result<&'a [u8], VmError> {
+        let _ = op;
+        ds.bam_bytes().ok_or(VmError::SourceFormat {
+            expected: "bam",
+            got: format_label(&ds.format),
+        })
+    }
+
+    fn peek_cursor(&self, pc: usize) -> Result<Arc<Mutex<Cursor>>, VmError> {
+        match self.stack.last() {
+            Some(RuntimeValue::Cursor(c)) => Ok(c.clone()),
+            Some(other) => Err(VmError::TypeMismatch {
+                expected: "cursor",
+                got: other.type_name(),
+                pc,
+            }),
+            None => Err(VmError::StackUnderflow(pc)),
+        }
+    }
+
+    fn const_str(&self, idx: u16) -> Arc<str> {
+        match self.program.consts.get(idx as usize) {
+            Some(Value::Str(s)) => Arc::from(s.as_ref()),
+            _ => Arc::from(""),
+        }
+    }
+
+    /// Extract a per-record sub-program (offsets relative to its own start) into
+    /// a standalone [`Program`] sharing this program's constant pool, runnable
+    /// from `pc = 0`.
+    fn extract_subprogram(&self, off: usize, len: usize) -> Program {
+        let end = (off + len).min(self.program.code.len());
+        Program {
+            consts: self.program.consts.clone(),
+            code: self.program.code[off..end].to_vec(),
+            debug: Vec::new(),
+            region: None,
+        }
+    }
+
+    // ── Expression interpreter (Phase 3, now record-aware) ───────────────────
 
     fn exec_expr(&mut self, op: OpCode) -> Result<(), VmError> {
         let pc0 = self.pc;
-        self.pc += 1; // consume opcode byte
+        self.pc += 1;
         match op {
             OpCode::LoadConst => {
                 let idx = self.read_u16();
@@ -199,12 +658,36 @@ impl Vm {
                     .program
                     .consts
                     .get(idx as usize)
-                    .map(RuntimeValue::from_const)
+                    .map(from_const)
                     .unwrap_or(RuntimeValue::Null);
                 self.stack.push(v);
             }
             OpCode::LoadTrue => self.stack.push(RuntimeValue::Bool(true)),
             OpCode::LoadFalse => self.stack.push(RuntimeValue::Bool(false)),
+            OpCode::LoadField => {
+                let idx = self.read_u16();
+                let v = match (&self.current_record, self.const_str(idx)) {
+                    (Some(rec), name) => rec.get_field(&name),
+                    (None, _) => RuntimeValue::Null,
+                };
+                self.stack.push(v);
+            }
+            OpCode::GetField => {
+                let idx = self.read_u16();
+                let name = self.const_str(idx);
+                let obj = self.pop(pc0)?;
+                let v = match obj {
+                    RuntimeValue::Record(r) => r.get_field(&name),
+                    _ => RuntimeValue::Null,
+                };
+                self.stack.push(v);
+            }
+            OpCode::Index => {
+                let _key = self.pop(pc0)?;
+                let _obj = self.pop(pc0)?;
+                self.stack.push(RuntimeValue::Null);
+            }
+            OpCode::LoadWildcard => self.stack.push(RuntimeValue::Null),
             OpCode::Neg => {
                 let a = self.pop(pc0)?;
                 let r = match a {
@@ -224,6 +707,7 @@ impl Vm {
                 let a = self.pop(pc0)?;
                 match a {
                     RuntimeValue::Bool(b) => self.stack.push(RuntimeValue::Bool(!b)),
+                    RuntimeValue::Null => self.stack.push(RuntimeValue::Bool(true)),
                     other => {
                         return Err(VmError::TypeMismatch {
                             expected: "bool",
@@ -247,16 +731,16 @@ impl Vm {
                 let jmp = self.read_u16() as usize;
                 let top = self.peek(pc0)?;
                 if !top.is_truthy() {
-                    self.pc = jmp; // short-circuit: leave the falsey value
+                    self.pc = jmp;
                 } else {
-                    self.pop(pc0)?; // discard left; right's value is the result
+                    self.pop(pc0)?;
                 }
             }
             OpCode::Or => {
                 let jmp = self.read_u16() as usize;
                 let top = self.peek(pc0)?;
                 if top.is_truthy() {
-                    self.pc = jmp; // short-circuit: leave the truthy value
+                    self.pc = jmp;
                 } else {
                     self.pop(pc0)?;
                 }
@@ -272,17 +756,18 @@ impl Vm {
                 let target = self.read_u16() as usize;
                 self.pc = target;
             }
-            // Opcodes requiring a record/runtime context arrive in Phase 4.
-            OpCode::LoadField
-            | OpCode::GetField
-            | OpCode::Index
-            | OpCode::LoadWildcard
-            | OpCode::CallFn => {
+            OpCode::CallFn => {
                 return Err(VmError::NotYetImplemented(op.name().to_string()))
             }
             other => return Err(VmError::NotYetImplemented(other.name().to_string())),
         }
         Ok(())
+    }
+
+    fn read_u8(&mut self) -> u8 {
+        let v = self.program.code[self.pc];
+        self.pc += 1;
+        v
     }
 
     fn read_u16(&mut self) -> u16 {
@@ -300,16 +785,188 @@ impl Vm {
     }
 }
 
+// ── Free helpers ─────────────────────────────────────────────────────────────
+
+fn from_const(v: &Value) -> RuntimeValue {
+    match v {
+        Value::Int(n) => RuntimeValue::Int(*n),
+        Value::Float(x) => RuntimeValue::Float(*x),
+        Value::Str(s) => RuntimeValue::Str(Arc::from(s.as_ref())),
+        Value::Bool(b) => RuntimeValue::Bool(*b),
+        Value::Null => RuntimeValue::Null,
+    }
+}
+
+fn as_i64(v: &RuntimeValue) -> Option<i64> {
+    match v {
+        RuntimeValue::Int(n) => Some(*n),
+        RuntimeValue::Float(x) => Some(*x as i64),
+        _ => None,
+    }
+}
+
+fn as_f64(v: &RuntimeValue) -> Option<f64> {
+    v.as_f64()
+}
+
+/// Collect read records, optionally BAI-seeked, annotating each with its
+/// chromosome name and a pileup depth (number of collected reads covering its
+/// start position).
+fn collect_read_records(
+    bytes: &[u8],
+    bai: Option<&[u8]>,
+    region: &Option<crate::runtime::Region>,
+) -> Result<Vec<Record>, VmError> {
+    let header = bam::read_header(bytes).map_err(VmError::io)?;
+    let refs = reference_list(&header);
+
+    let mut reads: Vec<AlnRecord> = Vec::new();
+    match (region, bai) {
+        (Some(r), Some(bai_bytes)) => {
+            bam::for_each_region_full(bytes, bai_bytes, &r.to_core(), |a| reads.push(a))
+                .map_err(VmError::io)?;
+        }
+        _ => {
+            bam::for_each_full(bytes, |a| reads.push(a)).map_err(VmError::io)?;
+        }
+    }
+
+    // Pileup depth at each (ref, position) over the collected read set.
+    let mut depth: HashMap<(i32, i64), i64> = HashMap::new();
+    for a in &reads {
+        let span = a.seq.len() as i64;
+        for p in a.pos..a.pos + span {
+            *depth.entry((a.ref_id, p)).or_default() += 1;
+        }
+    }
+
+    Ok(reads
+        .into_iter()
+        .map(|a| {
+            let chrom = refs
+                .get(a.ref_id as usize)
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default();
+            let d = *depth.get(&(a.ref_id, a.pos)).unwrap_or(&0);
+            Record::Alignment(AlnRow {
+                aln: a,
+                chrom,
+                depth: d,
+            })
+        })
+        .collect())
+}
+
+/// Parse a (small) FASTA byte buffer into `name -> sequence`.
+fn parse_fasta(bytes: &[u8]) -> HashMap<String, String> {
+    let mut seqs = HashMap::new();
+    let text = String::from_utf8_lossy(bytes);
+    let mut name = String::new();
+    let mut seq = String::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('>') {
+            if !name.is_empty() {
+                seqs.insert(std::mem::take(&mut name), std::mem::take(&mut seq));
+            }
+            name = rest.split_whitespace().next().unwrap_or("").to_string();
+        } else {
+            seq.push_str(line.trim());
+        }
+    }
+    if !name.is_empty() {
+        seqs.insert(name, seq);
+    }
+    seqs
+}
+
+fn format_header(refs: &[(String, usize)]) -> String {
+    let mut out = String::from("reference sequences:\n");
+    for (name, len) in refs {
+        out.push_str(&format!("  {name}\t{len}\n"));
+    }
+    out
+}
+
+/// Serialize materialized records into the target output format's bytes.
+fn serialize_records(fmt: Format, records: &[Record]) -> Result<Vec<u8>, VmError> {
+    let label = format_label(&fmt);
+    match fmt {
+        Format::Vcf => Ok(records_to_vcf(records).into_bytes()),
+        Format::Bed => Ok(records_to_bed(records).into_bytes()),
+        // JSON is the lossless default; `INTO fasta` is repurposed as the JSON
+        // sink for record streams (the parser has no `json` format token yet).
+        Format::Fasta => Ok(records_to_json(records).into_bytes()),
+        Format::Bam | Format::Cram => Err(VmError::UnsupportedInto(label.to_string())),
+    }
+}
+
+/// Records → JSON array (lossless; used for roundtrip + the WASM bridge).
+pub fn records_to_json(records: &[Record]) -> String {
+    let arr: Vec<serde_json::Value> = records.iter().map(record_to_json).collect();
+    serde_json::Value::Array(arr).to_string()
+}
+
+pub fn record_to_json(r: &Record) -> serde_json::Value {
+    use serde_json::json;
+    match r {
+        Record::Variant(v) => serde_json::to_value(v).unwrap_or(json!({})),
+        Record::CoverageWindow(w) => serde_json::to_value(w).unwrap_or(json!({})),
+        Record::Alignment(a) => json!({
+            "chrom": a.chrom,
+            "pos": a.aln.pos,
+            "mapq": a.aln.mapq,
+            "flag": a.aln.flag,
+            "depth": a.depth,
+        }),
+        Record::Header(refs) => {
+            let list: Vec<serde_json::Value> = refs
+                .iter()
+                .map(|(n, l)| json!({ "name": n, "length": l }))
+                .collect();
+            json!({ "references": list })
+        }
+    }
+}
+
+fn records_to_vcf(records: &[Record]) -> String {
+    let mut out = String::from(
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+    );
+    for r in records {
+        if let Record::Variant(v) = r {
+            out.push_str(&format!(
+                "{}\t{}\t.\t{}\t{}\t{:.1}\tPASS\tDP={};AF={:.4}\n",
+                v.chrom, v.pos, v.ref_base, v.alt, v.qual, v.depth, v.allele_freq
+            ));
+        }
+    }
+    out
+}
+
+fn records_to_bed(records: &[Record]) -> String {
+    let mut out = String::new();
+    for r in records {
+        match r {
+            Record::CoverageWindow(w) => out.push_str(&format!(
+                "{}\t{}\t{}\t{:.4}\n",
+                w.chromosome, w.start, w.end, w.normalized
+            )),
+            Record::Variant(v) => out.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                v.chrom,
+                v.pos - 1,
+                v.pos,
+                v.alt
+            )),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Arithmetic: integer when both operands are integers, otherwise float.
 fn arith(op: OpCode, a: RuntimeValue, b: RuntimeValue, pc: usize) -> Result<RuntimeValue, VmError> {
     use RuntimeValue::{Float, Int};
-    let num = |v: &RuntimeValue| -> Option<f64> {
-        match v {
-            Int(n) => Some(*n as f64),
-            Float(x) => Some(*x),
-            _ => None,
-        }
-    };
     match (&a, &b) {
         (Int(x), Int(y)) => {
             let r = match op {
@@ -331,10 +988,10 @@ fn arith(op: OpCode, a: RuntimeValue, b: RuntimeValue, pc: usize) -> Result<Runt
             Ok(Int(r))
         }
         _ => {
-            let (x, y) = match (num(&a), num(&b)) {
+            let (x, y) = match (a.as_f64(), b.as_f64()) {
                 (Some(x), Some(y)) => (x, y),
                 _ => {
-                    let bad = if num(&a).is_none() { &a } else { &b };
+                    let bad = if a.as_f64().is_none() { &a } else { &b };
                     return Err(VmError::TypeMismatch {
                         expected: "number",
                         got: bad.type_name(),
@@ -354,27 +1011,25 @@ fn arith(op: OpCode, a: RuntimeValue, b: RuntimeValue, pc: usize) -> Result<Runt
     }
 }
 
-/// Comparison: `EQ`/`NE` work on any matching pair; the ordering operators
-/// require numbers.
-fn compare(op: OpCode, a: RuntimeValue, b: RuntimeValue, pc: usize) -> Result<RuntimeValue, VmError> {
-    use RuntimeValue::{Bool, Float, Int};
-    let num = |v: &RuntimeValue| -> Option<f64> {
-        match v {
-            Int(n) => Some(*n as f64),
-            Float(x) => Some(*x),
-            _ => None,
-        }
-    };
+/// Comparison: `EQ`/`NE` work on any matching pair; ordering operators require
+/// numbers.
+fn compare(
+    op: OpCode,
+    a: RuntimeValue,
+    b: RuntimeValue,
+    pc: usize,
+) -> Result<RuntimeValue, VmError> {
+    use RuntimeValue::Bool;
 
     if matches!(op, OpCode::Eq | OpCode::Ne) {
         let eq = a == b;
         return Ok(Bool(if op == OpCode::Eq { eq } else { !eq }));
     }
 
-    let (x, y) = match (num(&a), num(&b)) {
+    let (x, y) = match (a.as_f64(), b.as_f64()) {
         (Some(x), Some(y)) => (x, y),
         _ => {
-            let bad = if num(&a).is_none() { &a } else { &b };
+            let bad = if a.as_f64().is_none() { &a } else { &b };
             return Err(VmError::TypeMismatch {
                 expected: "number",
                 got: bad.type_name(),

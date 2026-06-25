@@ -6,7 +6,7 @@
 
 use std::io;
 
-use codonsplice_core::{compile, disassemble, Vm, VmError, VmOutput};
+use codonsplice_core::{compile, disassemble, Vm, VmOutput};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -38,6 +38,7 @@ impl OutputPane {
             lines: vec![
                 Line::from("Press Ctrl+Enter (or F5) to compile + run."),
                 Line::from("Ctrl+D: bytecode   Ctrl+A: AST   F1: help   Ctrl+Q: quit"),
+                Line::from("New: run `splice install` for the guided installer (INSTALL flow)."),
             ],
         }
     }
@@ -94,9 +95,18 @@ impl App {
                         format!("✓ compiled and reached HALT ({bytes} bytes of bytecode).")
                     }
                     Ok(VmOutput::Text(t)) => t,
-                    Err(VmError::NotYetImplemented(op)) => format!(
-                        "✓ compiled OK ({bytes} bytes).\n\npipeline execution stubs at `{op}`.\nthe cnvlens-core bridge lands in Phase 4 — for now, try Ctrl+D to\ninspect the bytecode this query lowers to."
-                    ),
+                    Ok(VmOutput::Records(records)) => {
+                        let mut s = String::new();
+                        for r in records.iter().take(100) {
+                            s.push_str(&codonsplice_core::vm::record_to_json(r).to_string());
+                            s.push('\n');
+                        }
+                        if records.len() > 100 {
+                            s.push_str(&format!("… {} more\n", records.len() - 100));
+                        }
+                        s.push_str(&format!("\n({} record(s))", records.len()));
+                        s
+                    }
                     Err(e) => format!("runtime error: {e}"),
                 };
                 self.output = OutputPane::from_text("OUTPUT · run", &msg);

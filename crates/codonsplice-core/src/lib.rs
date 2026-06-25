@@ -24,13 +24,19 @@
 //! ```
 
 pub mod compiler;
+pub mod materialize;
+pub mod runtime;
 pub mod vm;
 
 pub use compiler::{
-    did_you_mean, disassemble, levenshtein, param_names_for, suggest_param, CompileError, Compiler,
-    DebugInfo, OpCode, Program, Value,
+    did_you_mean, disassemble, extract_region, levenshtein, param_names_for, suggest_param,
+    CompileError, Compiler, DebugInfo, OpCode, Program, Value,
 };
-pub use vm::{RuntimeValue, Vm, VmError, VmOutput};
+pub use materialize::{materialize, materialize_streaming};
+pub use runtime::{
+    AlnRow, Cursor, Dataset, DatasetInner, QueryOptions, Record, Region, RuntimeValue,
+};
+pub use vm::{Io, Vm, VmError, VmOutput};
 
 use spliceql::ast::Query;
 

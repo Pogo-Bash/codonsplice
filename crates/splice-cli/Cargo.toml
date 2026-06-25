@@ -15,3 +15,6 @@ codonsplice-core = { path = "../codonsplice-core" }
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 spliceql = { path = "../spliceql" }
+# Installer: tiny blocking HTTP client for the GitHub releases API (no async).
+ureq = "2"
+serde_json = "1"

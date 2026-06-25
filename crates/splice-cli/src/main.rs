@@ -7,10 +7,11 @@
 //! splice check   "FROM ..."    parse + type-check only, no execution
 //! ```
 
+mod installer;
 mod tui;
 
 use clap::{Parser, Subcommand};
-use codonsplice_core::{compile, disassemble, suggest_param, CompileError, Vm, VmError, VmOutput};
+use codonsplice_core::{compile, disassemble, suggest_param, CompileError, Vm, VmOutput};
 
 #[derive(Parser)]
 #[command(
@@ -31,6 +32,8 @@ enum Command {
     Compile { source: String },
     /// Parse and type-check a query without executing it.
     Check { source: String },
+    /// Launch the guided TUI installer (detect environment + install).
+    Install,
 }
 
 fn main() -> std::process::ExitCode {
@@ -46,6 +49,13 @@ fn main() -> std::process::ExitCode {
         Some(Command::Query { source }) => cmd_query(&source),
         Some(Command::Compile { source }) => cmd_compile(&source),
         Some(Command::Check { source }) => cmd_check(&source),
+        Some(Command::Install) => match installer::run() {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("installer error: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -64,9 +74,9 @@ fn cmd_query(source: &str) -> std::process::ExitCode {
             println!("{t}");
             std::process::ExitCode::SUCCESS
         }
-        Err(VmError::NotYetImplemented(op)) => {
-            println!("✓ compiled OK ({bytes} bytes).");
-            println!("  pipeline execution stubs at `{op}` — the cnvlens-core bridge lands in Phase 4.");
+        Ok(VmOutput::Records(records)) => {
+            print!("{}", render_records(&records));
+            println!("({} record(s))", records.len());
             std::process::ExitCode::SUCCESS
         }
         Err(e) => {
@@ -74,6 +84,21 @@ fn cmd_query(source: &str) -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Render a materialized record stream as newline-delimited JSON (capped, with
+/// an elision note for large results).
+fn render_records(records: &[codonsplice_core::Record]) -> String {
+    const CAP: usize = 50;
+    let mut out = String::new();
+    for r in records.iter().take(CAP) {
+        out.push_str(&codonsplice_core::vm::record_to_json(r).to_string());
+        out.push('\n');
+    }
+    if records.len() > CAP {
+        out.push_str(&format!("… {} more\n", records.len() - CAP));
+    }
+    out
 }
 
 fn cmd_compile(source: &str) -> std::process::ExitCode {

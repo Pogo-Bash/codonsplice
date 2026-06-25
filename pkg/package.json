@@ -1,0 +1,36 @@
+{
+  "name": "@codonsplice/wasm",
+  "version": "0.1.0",
+  "description": "CodonSplice — run SpliceQL genomic queries (BAM/VCF) in the browser via WASM",
+  "type": "module",
+  "main": "codonsplice_wasm.js",
+  "module": "codonsplice_wasm.js",
+  "types": "codonsplice_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./codonsplice_wasm.d.ts",
+      "import": "./codonsplice_wasm.js"
+    },
+    "./helpers": "./index.js",
+    "./react": "./react/index.js",
+    "./vue": "./vue/index.js",
+    "./svelte": "./svelte/index.js",
+    "./astro": "./astro/index.js"
+  },
+  "files": [
+    "codonsplice_wasm_bg.wasm",
+    "codonsplice_wasm.js",
+    "codonsplice_wasm.d.ts",
+    "index.js",
+    "react/",
+    "vue/",
+    "svelte/",
+    "astro/"
+  ],
+  "sideEffects": [
+    "./codonsplice_wasm.js"
+  ],
+  "keywords": ["genomics", "bioinformatics", "spliceql", "bam", "vcf", "wasm", "cnv", "variant-calling"],
+  "license": "MIT",
+  "repository": "github:Pogo-Bash/codonsplice"
+}

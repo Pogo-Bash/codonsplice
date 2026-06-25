@@ -5,7 +5,11 @@ members = ["crates/codonsplice-core", "crates/splice-cli"]
 # symlink. It is the read-only Phase 1/2 language crate and must NOT be built or
 # tested as part of this workspace (it has its own fuzz sub-crate, etc.), so it
 # is excluded as a member while still usable as a path dependency.
-exclude = ["crates/spliceql"]
+# `codonsplice-wasm` is the wasm32 build target (cdylib + wasm-bindgen). It is
+# excluded from the native workspace so `cargo build`/`cargo test` on the host
+# don't try to compile js-sys/web-sys; build it with
+# `cargo build -p codonsplice-wasm --target wasm32-unknown-unknown` or wasm-pack.
+exclude = ["crates/spliceql", "crates/codonsplice-wasm"]
 
 [profile.release]
 opt-level = 3

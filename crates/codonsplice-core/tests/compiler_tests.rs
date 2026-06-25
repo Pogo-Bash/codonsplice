@@ -290,10 +290,13 @@ fn vm_not() {
 }
 
 #[test]
-fn vm_pipeline_opcode_is_not_yet_implemented() {
+fn vm_pipeline_opcode_is_wired_in_phase4() {
+    // Phase 4 implements the pipeline/CALL opcodes. `OPEN_SOURCE` now actually
+    // tries to load the file, so a nonexistent path surfaces as an I/O error
+    // rather than the old `NotYetImplemented` stub.
     let p = ok(r#"FROM bam "x.bam" CALL variants"#);
     let res = Vm::new(p).run();
-    assert!(matches!(res, Err(VmError::NotYetImplemented(_))), "got {res:?}");
+    assert!(matches!(res, Err(VmError::Io(_))), "got {res:?}");
 }
 
 // ── Group 5 — Disassembler ───────────────────────────────────────────────────

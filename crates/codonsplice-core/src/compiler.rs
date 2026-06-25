@@ -333,6 +333,10 @@ pub struct Program {
     pub consts: Vec<Value>,
     pub code: Vec<u8>,
     pub debug: Vec<DebugInfo>,
+    /// Statically-extracted region from the `WHERE` clause (`chr = "x"` plus
+    /// optional `pos` bounds), used to drive BAI seeking at execution time.
+    /// `None` when the predicate has no recognizable region constraint.
+    pub region: Option<crate::runtime::Region>,
 }
 
 impl Program {
@@ -707,10 +711,14 @@ impl Compiler {
             self.patch_u16(patch, off as u16);
         }
 
+        // Statically extract a seekable region from the WHERE clause, if any.
+        let region = query.filter.as_ref().and_then(extract_region);
+
         Ok(Program {
             consts: self.consts,
             code: self.code,
             debug: self.debug,
+            region,
         })
     }
 
@@ -726,6 +734,7 @@ impl Compiler {
             consts: self.consts,
             code: self.code,
             debug: self.debug,
+            region: None,
         }
     }
 
@@ -1084,6 +1093,110 @@ fn const_eval(expr: &Expr) -> Option<Value> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+// ── Static region extraction (for BAI seeking) ───────────────────────────────
+
+/// Pull a seekable [`Region`](crate::runtime::Region) out of a `WHERE` clause.
+///
+/// Recognizes `chr = "chrN"` (or `chrom = ...`) optionally AND-ed with `pos`
+/// bounds (`pos >= X`, `pos <= Y`, and the strict variants). Any other shape
+/// yields `None`, in which case execution falls back to a full scan plus the
+/// per-record predicate — so this is purely an optimization, never a
+/// correctness requirement.
+pub fn extract_region(filter: &Expr) -> Option<crate::runtime::Region> {
+    let mut chrom: Option<String> = None;
+    let mut start: Option<i64> = None;
+    let mut end: Option<i64> = None;
+    collect_region(filter, &mut chrom, &mut start, &mut end);
+    chrom.map(|c| crate::runtime::Region {
+        chrom: c,
+        start,
+        end,
+    })
+}
+
+fn collect_region(
+    e: &Expr,
+    chrom: &mut Option<String>,
+    start: &mut Option<i64>,
+    end: &mut Option<i64>,
+) {
+    match e {
+        Expr::Binary {
+            op: BinOp::And,
+            left,
+            right,
+            ..
+        } => {
+            collect_region(left, chrom, start, end);
+            collect_region(right, chrom, start, end);
+        }
+        Expr::Binary {
+            op, left, right, ..
+        } => {
+            if matches!(op, BinOp::Eq) {
+                if let Some(name) = ident_string_eq(left, right) {
+                    if chrom.is_none() {
+                        *chrom = Some(name);
+                    }
+                    return;
+                }
+            }
+            // Normalize `field OP int` (or `int OP field`, flipping the op).
+            if let Some((field, lit, flipped)) = field_int_cmp(left, right) {
+                if field == "pos" {
+                    let op = if flipped { flip_op(op) } else { op.clone() };
+                    match op {
+                        BinOp::GtEq | BinOp::Gt => {
+                            if start.is_none() {
+                                *start = Some(lit);
+                            }
+                        }
+                        BinOp::LtEq | BinOp::Lt => {
+                            if end.is_none() {
+                                *end = Some(lit);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// If one operand is `chr`/`chrom` and the other a string literal, return the
+/// chromosome name.
+fn ident_string_eq(a: &Expr, b: &Expr) -> Option<String> {
+    let is_chr = |e: &Expr| matches!(e, Expr::Ident(n, _) if n == "chr" || n == "chrom");
+    match (a, b) {
+        (Expr::StringLit(s, _), e) | (e, Expr::StringLit(s, _)) if is_chr(e) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// If one operand is an identifier and the other an int literal, return
+/// `(field_name, int_value, flipped)` where `flipped` is true when the int was
+/// the left operand.
+fn field_int_cmp(a: &Expr, b: &Expr) -> Option<(String, i64, bool)> {
+    match (a, b) {
+        (Expr::Ident(n, _), Expr::IntLit(v, _)) => Some((n.clone(), *v, false)),
+        (Expr::IntLit(v, _), Expr::Ident(n, _)) => Some((n.clone(), *v, true)),
+        _ => None,
+    }
+}
+
+/// Mirror a comparison operator (used when the literal is the left operand).
+fn flip_op(op: &BinOp) -> BinOp {
+    match op {
+        BinOp::Lt => BinOp::Gt,
+        BinOp::Gt => BinOp::Lt,
+        BinOp::LtEq => BinOp::GtEq,
+        BinOp::GtEq => BinOp::LtEq,
+        other => other.clone(),
     }
 }
 
