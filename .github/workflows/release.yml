@@ -52,12 +52,22 @@ jobs:
         shell: bash
         run: |
           bin="target/${{ matrix.target }}/release/splice"
-          [ -f "$bin.exe" ] && bin="$bin.exe"
-          cp "$bin" "${{ matrix.asset }}"
+          if [ -f "$bin.exe" ]; then
+            # Windows: ship the raw .exe (asset already ends in .exe).
+            cp "$bin.exe" "${{ matrix.asset }}"
+          else
+            # Unix: tar the `splice` binary into <asset>.tar.gz so install.sh
+            # can `curl … | tar xz` it.
+            cp "$bin" splice
+            tar -czf "${{ matrix.asset }}.tar.gz" splice
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.tar.gz
+          if-no-files-found: ignore
 
   # ── 2. WASM package ────────────────────────────────────────────────────────
   build-wasm:
@@ -123,6 +133,8 @@ jobs:
         with: { submodules: recursive }
       - uses: actions/download-artifact@v4
         with: { name: splice-linux-x86_64, path: . }
+      - name: Unpack the binary
+        run: tar -xzf splice-linux-x86_64.tar.gz
       - name: Fetch the sample BAM
         run: |
           mkdir -p sample
@@ -131,8 +143,8 @@ jobs:
           curl -fsSL "$base/NA12878_EGFR.bam.bai" -o sample/NA12878_EGFR.bam.bai
       - name: Run a region variant query and check a known call
         run: |
-          chmod +x splice-linux-x86_64
-          out=$(./splice-linux-x86_64 query \
+          chmod +x splice
+          out=$(./splice query \
             'FROM bam "sample/NA12878_EGFR.bam" WHERE chr = "7" CALL variants LIMIT 50')
           echo "$out"
           # A known EGFR-region SNV from the sample (chr7:55002631).
