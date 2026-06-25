@@ -25,6 +25,10 @@ jobs:
             os: ubuntu-latest
             asset: splice-linux-aarch64
             cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            asset: splice-macos-x86_64
+          - target: x86_64-pc-windows-msvc
             os: windows-latest
             asset: splice-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
