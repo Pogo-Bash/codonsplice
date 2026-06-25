@@ -107,7 +107,10 @@ jobs:
             [ -f "$f" ] && sed -i "s/\"version\": \"[^\"]*/\"version\": \"$VERSION/" "$f"
           done
       - name: Publish wasm + framework wrappers
+        env:
+          NODE_AUTH_TOKEN: ""
         run: |
+          unset NODE_AUTH_TOKEN
           for dir in pkg pkg/react pkg/vue pkg/svelte pkg/astro; do
             echo "Publishing $dir..."
             (cd "$dir" && npm publish --access public)
