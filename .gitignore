@@ -2,3 +2,12 @@
 **/target/
 **/*.rs.bk
 /pkg/wasm/
+
+# Assembled npm CLI packages — binaries are downloaded from GitHub Releases at
+# build time by scripts/build-cli-packages.sh, never committed. Source of truth
+# is scripts/cli-templates/.
+/pkg/cli/
+/pkg/cli-linux-x64/
+/pkg/cli-linux-arm64/
+/pkg/cli-darwin-x64/
+/pkg/cli-win32-x64/
