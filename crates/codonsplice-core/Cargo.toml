@@ -1,0 +1,12 @@
+[package]
+name = "codonsplice-core"
+version = "0.1.0"
+edition = "2021"
+description = "CodonSplice engine — SpliceQL bytecode compiler, VM, and (Phase 4) cnvlens-core bridge"
+license = "MIT"
+
+# Phase 3 has a single dependency: the read-only spliceql language crate
+# (lexer + parser + AST), referenced via the workspace `crates/spliceql` symlink.
+# The cnvlens-core bridge lands in Phase 4 and will add `cnvlens-core` here.
+[dependencies]
+spliceql = { path = "../spliceql" }

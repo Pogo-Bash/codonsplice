@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/codonsplice-core", "crates/splice-cli"]
+# `spliceql` is referenced as a path dependency through the `crates/spliceql`
+# symlink. It is the read-only Phase 1/2 language crate and must NOT be built or
+# tested as part of this workspace (it has its own fuzz sub-crate, etc.), so it
+# is excluded as a member while still usable as a path dependency.
+exclude = ["crates/spliceql"]
+
+[profile.release]
+opt-level = 3
+lto = true
