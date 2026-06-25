@@ -21,6 +21,18 @@ if (!exists(WASM)) {
   process.exit(1)
 }
 
+// wasm-pack derives the npm name from the crate name (codonsplice-wasm); rewrite
+// the generated pkg/wasm/package.json to the scoped name we publish under.
+const WASM_PKG_JSON = path.join(WASM, 'package.json')
+if (exists(WASM_PKG_JSON)) {
+  const manifest = JSON.parse(fs.readFileSync(WASM_PKG_JSON, 'utf8'))
+  if (manifest.name !== '@codonsplice/wasm') {
+    manifest.name = '@codonsplice/wasm'
+    fs.writeFileSync(WASM_PKG_JSON, JSON.stringify(manifest, null, 2) + '\n')
+    console.log('✓ pkg/wasm/package.json name set to @codonsplice/wasm')
+  }
+}
+
 // Flatten the wasm-pack artifacts up into pkg/ so `main`/`types` resolve.
 for (const f of fs.readdirSync(WASM)) {
   if (f === 'package.json' || f === '.gitignore' || f === 'README.md') continue
