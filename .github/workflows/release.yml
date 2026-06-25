@@ -18,11 +18,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Pin Linux legs to 22.04 (glibc 2.35) so the binaries run on older
+          # distros — Ubuntu 22.04, Debian 12 (2.36), etc. Building on
+          # ubuntu-latest (24.04 / glibc 2.39) would raise the floor and break
+          # those systems, since glibc is forward- but not backward-compatible.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             asset: splice-linux-x86_64
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             asset: splice-linux-aarch64
             cross: true
           - target: x86_64-apple-darwin
