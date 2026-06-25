@@ -115,12 +115,12 @@ jobs:
           done
       - name: Publish wasm + framework wrappers
         env:
-          NODE_AUTH_TOKEN: ""
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          unset NODE_AUTH_TOKEN
           for dir in pkg pkg/react pkg/vue pkg/svelte pkg/astro; do
             echo "Publishing $dir..."
-            (cd "$dir" && npm publish --access public)
+            (cd "$dir" && npm publish --access public) \
+              || echo "skip $dir (already published at this version?)"
           done
 
   # ── 4. Publish crates to crates.io ─────────────────────────────────────────
@@ -257,8 +257,9 @@ jobs:
             chmod +x "pkg/$d/bin/splice" || true
           done
       - name: Publish cli packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          unset NODE_AUTH_TOKEN
           # Platform packages first so the main package's optionalDependencies
           # already exist on the registry when someone installs @codonsplice/cli.
           for dir in pkg/cli-linux-x64 pkg/cli-linux-arm64 \
