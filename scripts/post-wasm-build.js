@@ -28,6 +28,10 @@ if (exists(WASM_PKG_JSON)) {
   const manifest = JSON.parse(fs.readFileSync(WASM_PKG_JSON, 'utf8'))
   if (manifest.name !== '@codonsplice/wasm') {
     manifest.name = '@codonsplice/wasm'
+    manifest.repository = {
+      type: 'git',
+      url: 'git+https://github.com/Pogo-Bash/codonsplice.git'
+    }
     fs.writeFileSync(WASM_PKG_JSON, JSON.stringify(manifest, null, 2) + '\n')
     console.log('✓ pkg/wasm/package.json name set to @codonsplice/wasm')
   }
