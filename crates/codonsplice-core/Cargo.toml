@@ -12,11 +12,11 @@ spliceql = { path = "../spliceql" }
 # Phase 4: the genomic execution backend. cnvlens-core exposes an `rlib` target,
 # so the native VM links its plain functions directly (BAM/VCF parsing, coverage,
 # variant calling, BAI seeking). Referenced by relative path to the sibling repo.
-cnvlens-core = { path = "../../../cnvlens/rust/cnvlens-core" }
+cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core" }
 serde_json = "1"
 
 [dev-dependencies]
 # Integration tests compare the VM against direct cnvlens-core calls and parse
 # emitted record JSON.
-cnvlens-core = { path = "../../../cnvlens/rust/cnvlens-core" }
+cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core" }
 serde_json = "1"
