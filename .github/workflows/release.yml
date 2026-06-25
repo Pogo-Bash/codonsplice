@@ -30,7 +30,10 @@ jobs:
             asset: splice-linux-aarch64
             cross: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            # Build on the Apple-Silicon runners (far better availability than
+            # the Intel macos-13 pool, which queues for hours). x86_64-apple-
+            # darwin is a first-class cross-target there via Xcode.
+            os: macos-latest
             asset: splice-macos-x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
