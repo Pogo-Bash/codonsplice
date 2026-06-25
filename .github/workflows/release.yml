@@ -136,6 +136,7 @@ jobs:
   verify:
     needs: build-binaries
     runs-on: ubuntu-latest
+    if: always()
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
@@ -193,9 +194,75 @@ jobs:
       # Submission to microsoft/winget-pkgs is a manual/wingetcreate follow-up:
       #   wingetcreate submit --token $WINGET_TOKEN manifests/
 
+  # ── 6. Assemble @codonsplice/cli npm packages from the built binaries ──────
+  build-cli-packages:
+    name: build cli npm packages
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Collect binaries
+        run: |
+          mkdir -p /tmp/release
+          find artifacts -type f -name 'splice-*' -exec cp {} /tmp/release/ \;
+          ls -la /tmp/release
+      - name: Build CLI npm packages from local artifacts
+        env:
+          # Use the binaries we just built instead of re-downloading from the
+          # (not-yet-published) GitHub Release.
+          RELEASE_ARTIFACTS_DIR: /tmp/release
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          bash scripts/build-cli-packages.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-packages
+          path: pkg/cli*/
+
+  # ── 7. Publish @codonsplice/cli* to npm ────────────────────────────────────
+  publish-cli:
+    name: publish cli npm packages
+    needs: [build-cli-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with: { name: cli-packages, path: pkg }
+      - name: Set version from tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          find pkg/cli* -name package.json -exec \
+            sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" {} \;
+      - name: Restore executable bits
+        # upload/download-artifact does not preserve the +x mode that npm
+        # publishes verbatim; restore it so the Unix binaries are runnable.
+        run: |
+          chmod +x pkg/cli/bin/splice || true
+          for d in cli-linux-x64 cli-linux-arm64 cli-darwin-x64; do
+            chmod +x "pkg/$d/bin/splice" || true
+          done
+      - name: Publish cli packages
+        run: |
+          unset NODE_AUTH_TOKEN
+          # Platform packages first so the main package's optionalDependencies
+          # already exist on the registry when someone installs @codonsplice/cli.
+          for dir in pkg/cli-linux-x64 pkg/cli-linux-arm64 \
+                     pkg/cli-darwin-x64 pkg/cli-win32-x64 pkg/cli; do
+            [ -d "$dir" ] && (cd "$dir" && npm publish --access public) \
+              || echo "skip $dir"
+          done
+
   # ── 5. GitHub Release with all artifacts + install.sh ──────────────────────
   release:
-    needs: [build-binaries, build-wasm, verify]
+    needs: [build-wasm, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
