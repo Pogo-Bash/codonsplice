@@ -90,13 +90,22 @@ jobs:
   publish-npm:
     needs: build-wasm
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          registry-url: "https://registry.npmjs.org"
       - uses: actions/download-artifact@v4
         with: { name: pkg, path: pkg }
+      - name: Set version from tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          for f in pkg/package.json pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
+            [ -f "$f" ] && sed -i "s/\"version\": \"[^\"]*/\"version\": \"$VERSION/" "$f"
+          done
       - name: Publish wasm + framework wrappers
         run: |
           for dir in pkg pkg/react pkg/vue pkg/svelte pkg/astro; do
