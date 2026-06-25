@@ -25,6 +25,23 @@ enum Focus {
     Output,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum Tab {
+    Editor,
+    Build,
+}
+
+/// Cross-compile / build targets offered in the BUILD tab.
+const BUILD_TARGETS: &[(&str, Option<&str>, bool)] = &[
+    ("native (host)", None, false),
+    ("linux-x86_64", Some("x86_64-unknown-linux-gnu"), false),
+    ("linux-aarch64", Some("aarch64-unknown-linux-gnu"), false),
+    ("macos-x86_64", Some("x86_64-apple-darwin"), false),
+    ("macos-aarch64", Some("aarch64-apple-darwin"), false),
+    ("windows-x86_64", Some("x86_64-pc-windows-msvc"), false),
+    ("wasm", None, true),
+];
+
 /// What the OUTPUT pane is currently showing.
 struct OutputPane {
     title: String,
@@ -60,6 +77,9 @@ struct App {
     scroll: u16,
     show_help: bool,
     quit: bool,
+    tab: Tab,
+    build_target: usize,
+    build_release: bool,
 }
 
 impl App {
@@ -76,6 +96,9 @@ impl App {
             scroll: 0,
             show_help: false,
             quit: false,
+            tab: Tab::Editor,
+            build_target: 0,
+            build_release: true,
         }
     }
 
@@ -95,7 +118,7 @@ impl App {
                         format!("✓ compiled and reached HALT ({bytes} bytes of bytecode).")
                     }
                     Ok(VmOutput::Text(t)) => t,
-                    Ok(VmOutput::Records(records)) => {
+                    Ok(VmOutput::Records(records)) | Ok(VmOutput::Rows(records)) => {
                         let mut s = String::new();
                         for r in records.iter().take(100) {
                             s.push_str(&codonsplice_core::vm::record_to_json(r).to_string());
@@ -114,6 +137,99 @@ impl App {
             Err(e) => self.show_error(&src, &e),
         }
         self.scroll = 0;
+    }
+
+    /// Build the editor content via a `splice build` subprocess (synchronous;
+    /// captured output is shown on completion).
+    fn run_build(&mut self) {
+        let (label, target, wasm) = BUILD_TARGETS[self.build_target];
+        let name = self.build_output_name();
+
+        // Write the editor content to a temp .spq.
+        let tmp = std::env::temp_dir().join(format!("splice-tui-{}.spq", std::process::id()));
+        if std::fs::write(&tmp, self.source()).is_err() {
+            self.output = OutputPane::from_text("OUTPUT · build", "error: could not write temp file");
+            return;
+        }
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => {
+                self.output = OutputPane::from_text("OUTPUT · build", &format!("error: {e}"));
+                return;
+            }
+        };
+
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("build").arg(&tmp).arg("-o").arg(&name);
+        if self.build_release {
+            cmd.arg("--release");
+        }
+        if wasm {
+            cmd.arg("--wasm");
+        } else if let Some(t) = target {
+            cmd.arg("--target").arg(t);
+        }
+
+        let out = cmd.output();
+        let _ = std::fs::remove_file(&tmp);
+        let mut text = format!("$ splice build (target: {label})\n\n");
+        match out {
+            Ok(o) => {
+                text.push_str(&String::from_utf8_lossy(&o.stdout));
+                text.push_str(&String::from_utf8_lossy(&o.stderr));
+                if !o.status.success() {
+                    text.push_str("\n✗ build failed");
+                }
+            }
+            Err(e) => text.push_str(&format!("error: {e}")),
+        }
+        let lines = text
+            .lines()
+            .map(|l| {
+                let style = if l.contains('✗') || l.to_lowercase().contains("error") {
+                    Style::new().fg(Color::Rgb(243, 139, 168))
+                } else if l.starts_with('✓') {
+                    Style::new().fg(Color::Rgb(166, 227, 161))
+                } else {
+                    Style::new().fg(Color::Gray)
+                };
+                Line::from(Span::styled(l.to_string(), style))
+            })
+            .collect();
+        self.output = OutputPane {
+            title: "OUTPUT · build".into(),
+            lines,
+        };
+        self.scroll = 0;
+    }
+
+    /// The output binary name: @name directive, else "query".
+    fn build_output_name(&self) -> String {
+        let src = self.source();
+        let (dirs, _) = crate::directive::parse_directives(&src);
+        dirs.name.unwrap_or_else(|| "query".to_string())
+    }
+
+    /// `$variables` referenced in the editor content (with @input metadata).
+    fn detected_vars(&self) -> Vec<(String, String)> {
+        let src = self.source();
+        let (dirs, _) = crate::directive::parse_directives(&src);
+        crate::directive::scan_vars(&src)
+            .into_iter()
+            .map(|name| {
+                let meta = match dirs.input(&name) {
+                    Some(i) => {
+                        let req = if i.required { "required" } else { "optional" };
+                        match &i.default {
+                            Some(d) => format!("{req}, default {d}"),
+                            None => req.to_string(),
+                        }
+                    }
+                    None => "undeclared".to_string(),
+                };
+                (name, meta)
+            })
+            .collect()
     }
 
     fn show_disassembly(&mut self) {
@@ -241,8 +357,22 @@ impl App {
                 self.show_ast();
                 return;
             }
+            KeyCode::Char('b') if ctrl => {
+                self.tab = match self.tab {
+                    Tab::Editor => Tab::Build,
+                    Tab::Build => Tab::Editor,
+                };
+                return;
+            }
+            KeyCode::Char('e') if ctrl => {
+                self.tab = Tab::Editor;
+                return;
+            }
             KeyCode::Enter if ctrl => {
-                self.run_query();
+                match self.tab {
+                    Tab::Build => self.run_build(),
+                    Tab::Editor => self.run_query(),
+                }
                 return;
             }
             KeyCode::F(5) => {
@@ -269,6 +399,19 @@ impl App {
 
         if self.show_help {
             return; // overlay swallows other input
+        }
+
+        // BUILD tab: arrows pick the target, Space toggles debug/release.
+        if self.tab == Tab::Build {
+            match key.code {
+                KeyCode::Up => self.build_target = self.build_target.saturating_sub(1),
+                KeyCode::Down => {
+                    self.build_target = (self.build_target + 1).min(BUILD_TARGETS.len() - 1)
+                }
+                KeyCode::Char(' ') => self.build_release = !self.build_release,
+                _ => {}
+            }
+            return;
         }
 
         match self.focus {
@@ -308,8 +451,31 @@ impl App {
             .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
             .split(outer[1]);
 
-        self.draw_editor(frame, body[0]);
-        self.draw_output(frame, body[1]);
+        match self.tab {
+            Tab::Editor => {
+                // Split the editor column to show a VARIABLES panel when the
+                // query references $vars.
+                let vars = self.detected_vars();
+                if vars.is_empty() {
+                    self.draw_editor(frame, body[0]);
+                } else {
+                    let left = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Min(3),
+                            Constraint::Length((vars.len() + 2).min(8) as u16),
+                        ])
+                        .split(body[0]);
+                    self.draw_editor(frame, left[0]);
+                    self.draw_variables(frame, left[1], &vars);
+                }
+                self.draw_output(frame, body[1]);
+            }
+            Tab::Build => {
+                self.draw_build(frame, body[0]);
+                self.draw_output(frame, body[1]);
+            }
+        }
         self.draw_architecture(frame, outer[2]);
 
         if self.show_help {
@@ -317,14 +483,75 @@ impl App {
         }
     }
 
+    fn draw_build(&self, frame: &mut Frame, area: Rect) {
+        let mut lines = vec![
+            Line::from(Span::styled("Target:", Style::new().fg(Color::Gray).bold())),
+        ];
+        for (i, (label, _, _)) in BUILD_TARGETS.iter().enumerate() {
+            let marker = if i == self.build_target { "●" } else { "○" };
+            let style = if i == self.build_target {
+                Style::new().fg(Color::Rgb(166, 227, 161)).bold()
+            } else {
+                Style::new().fg(Color::Gray)
+            };
+            lines.push(Line::from(Span::styled(format!("  {marker} {label}"), style)));
+        }
+        lines.push(Line::from(""));
+        let mode = if self.build_release { "● release   ○ debug" } else { "○ release   ● debug" };
+        lines.push(Line::from(vec![
+            Span::styled("Mode:   ", Style::new().fg(Color::Gray).bold()),
+            Span::styled(mode, Style::new().fg(Color::Rgb(250, 179, 135))),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Output: ", Style::new().fg(Color::Gray).bold()),
+            Span::styled(self.build_output_name(), Style::new().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "↑/↓ target · Space debug/release · Ctrl+Enter build · Ctrl+E editor",
+            Style::new().fg(Color::DarkGray),
+        )));
+        frame.render_widget(
+            Paragraph::new(lines).block(pane_block("BUILD", true)).wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn draw_variables(&self, frame: &mut Frame, area: Rect, vars: &[(String, String)]) {
+        let lines: Vec<Line> = vars
+            .iter()
+            .map(|(name, meta)| {
+                Line::from(vec![
+                    Span::styled(format!("  ${name:<10}"), Style::new().fg(Color::Rgb(203, 166, 247))),
+                    Span::styled(meta.clone(), Style::new().fg(Color::DarkGray)),
+                ])
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(lines).block(pane_block("VARIABLES", false)),
+            area,
+        );
+    }
+
     fn draw_header(&self, frame: &mut Frame, area: Rect) {
+        let tab_style = |active: bool| {
+            if active {
+                Style::new().fg(Color::Black).bg(Color::Rgb(250, 179, 135)).bold()
+            } else {
+                Style::new().fg(Color::Gray)
+            }
+        };
         let title = Line::from(vec![
             Span::styled("CodonSplice", Style::new().fg(Color::Cyan).bold()),
             Span::raw("  │  "),
-            Span::styled("SpliceQL query engine", Style::new().fg(Color::Gray)),
+            Span::styled(" EDITOR ", tab_style(self.tab == Tab::Editor)),
+            Span::raw(" "),
+            Span::styled(" BUILD ", tab_style(self.tab == Tab::Build)),
+            Span::raw("  "),
+            Span::styled("(Ctrl+B)  INSTALL→ splice install", Style::new().fg(Color::DarkGray)),
         ]);
         let hints = Line::from(Span::styled(
-            "Ctrl+Enter/F5 run · Ctrl+D bytecode · Ctrl+A AST · Tab focus · F1 help · Ctrl+Q quit",
+            "Ctrl+Enter run/build · Ctrl+B build tab · Ctrl+D bytecode · Ctrl+A AST · F1 help · Ctrl+Q quit",
             Style::new().fg(Color::DarkGray),
         ));
         let p = Paragraph::new(vec![title, hints]).block(Block::default().borders(Borders::ALL));

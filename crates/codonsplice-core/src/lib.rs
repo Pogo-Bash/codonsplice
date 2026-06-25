@@ -23,6 +23,7 @@
 //! assert!(asm.contains("CALL_VARIANTS"));
 //! ```
 
+pub mod bytecode;
 pub mod compiler;
 pub mod materialize;
 pub mod runtime;
@@ -32,9 +33,11 @@ pub use compiler::{
     did_you_mean, disassemble, extract_region, levenshtein, param_names_for, suggest_param,
     CompileError, Compiler, DebugInfo, OpCode, Program, Value,
 };
+pub use bytecode::BytecodeError;
 pub use materialize::{materialize, materialize_streaming};
 pub use runtime::{
-    AlnRow, Cursor, Dataset, DatasetInner, QueryOptions, Record, Region, RuntimeValue,
+    AlnRow, Cursor, Dataset, DatasetInner, ProjItem, QueryOptions, Record, Region, RuntimeValue,
+    VarMap,
 };
 pub use vm::{Io, Vm, VmError, VmOutput};
 

@@ -1,0 +1,28 @@
+{
+  "name": "spliceql",
+  "displayName": "SpliceQL",
+  "description": "Syntax highlighting for SpliceQL (.spq) genomic query files",
+  "version": "0.1.0",
+  "publisher": "codonsplice",
+  "license": "MIT",
+  "repository": "github:Pogo-Bash/codonsplice",
+  "engines": { "vscode": "^1.70.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "spliceql",
+        "aliases": ["SpliceQL", "spliceql"],
+        "extensions": [".spq"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "spliceql",
+        "scopeName": "source.spq",
+        "path": "../grammars/spliceql.tmLanguage.json"
+      }
+    ]
+  }
+}

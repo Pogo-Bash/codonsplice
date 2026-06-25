@@ -34,18 +34,25 @@ async function normalizeFiles(files) {
   return fileMap
 }
 
-/** Execute a query and return the result (array of records, or { text }). */
-export async function execute({ query, files }) {
+/** Execute a query and return the result (array of records/rows, or { text }). */
+export async function execute({ query, files, vars }) {
   const engine = await initEngine()
-  return engine.execute(query, await normalizeFiles(files))
+  return engine.execute(query, await normalizeFiles(files), vars || {})
+}
+
+/** Execute pre-compiled .spq.bc bytecode (Uint8Array) against files + vars. */
+export async function executeBytecode({ bytecode, files, vars }) {
+  const engine = await initEngine()
+  return engine.execute_bytecode(bytecode, await normalizeFiles(files), vars || {})
 }
 
 /** Stream a query's records: onRecord per row, onDone at end, onError on fail. */
-export async function stream({ query, files, onRecord, onDone, onError }) {
+export async function stream({ query, files, vars, onRecord, onDone, onError }) {
   const engine = await initEngine()
   return engine.stream(
     query,
     await normalizeFiles(files),
+    vars || {},
     onRecord || (() => {}),
     onDone || (() => {}),
     onError || ((e) => console.error(e)),

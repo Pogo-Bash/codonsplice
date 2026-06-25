@@ -7,11 +7,11 @@ export function useSpliceQL() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  const execute = useCallback(async ({ query, files }) => {
+  const execute = useCallback(async ({ query, files, vars }) => {
     setLoading(true)
     setError(null)
     try {
-      const r = await csExecute({ query, files })
+      const r = await csExecute({ query, files, vars })
       setResult(r)
       return r
     } catch (e) {

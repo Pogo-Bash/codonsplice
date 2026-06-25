@@ -1,0 +1,8 @@
+SpliceQL:
+  type: programming
+  color: "#a6e3a1"
+  extensions:
+  - ".spq"
+  tm_scope: source.spq
+  ace_mode: text
+  language_id: null

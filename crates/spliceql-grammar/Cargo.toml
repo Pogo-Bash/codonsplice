@@ -1,0 +1,14 @@
+# spliceql-grammar is a DATA-ONLY crate: it ships the TextMate grammar, the
+# GitHub Linguist submission fragment + sample, and a VS Code extension manifest.
+# It has no lib or bin target — `cargo` treats it as a metadata package whose
+# real payload lives under grammars/, linguist/, and vscode/.
+[package]
+name = "spliceql-grammar"
+version = "0.1.0"
+edition = "2021"
+description = "SpliceQL syntax-highlighting grammar (TextMate) + Linguist + VS Code assets"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"

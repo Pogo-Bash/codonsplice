@@ -7,7 +7,10 @@
 //! splice check   "FROM ..."    parse + type-check only, no execution
 //! ```
 
+mod build;
+mod directive;
 mod installer;
+mod spq;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -34,9 +37,45 @@ enum Command {
     Check { source: String },
     /// Launch the guided TUI installer (detect environment + install).
     Install,
+    /// Scaffold a new `<name>.spq` script.
+    New { name: String },
+    /// Run a `.spq` script, binding `$variables` from `--flag value` args.
+    Run {
+        file: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Compile a `.spq` script to a self-contained binary (or `.wasm`).
+    Build {
+        file: String,
+        /// Output binary name (default: @name directive or file stem).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Build in release mode.
+        #[arg(long)]
+        release: bool,
+        /// Cross-compile target triple.
+        #[arg(long)]
+        target: Option<String>,
+        /// Produce a `.wasm` instead of a native binary.
+        #[arg(long)]
+        wasm: bool,
+        /// Also write `<name>.spq.bc` alongside the binary.
+        #[arg(long = "emit-bc")]
+        emit_bc: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
+    // Shebang / direct execution: `splice query.spq [--args]` (and
+    // `./query.spq [--args]` via `#!/usr/bin/env splice`) runs the script.
+    let raw: Vec<String> = std::env::args().collect();
+    if let Some(first) = raw.get(1) {
+        if first.ends_with(".spq") && std::path::Path::new(first).is_file() {
+            return spq::cmd_run(first, &raw[2..]);
+        }
+    }
+
     let cli = Cli::parse();
     match cli.command {
         None => match tui::run() {
@@ -56,6 +95,25 @@ fn main() -> std::process::ExitCode {
                 std::process::ExitCode::FAILURE
             }
         },
+        Some(Command::New { name }) => spq::cmd_new(&name),
+        Some(Command::Run { file, args }) => spq::cmd_run(&file, &args),
+        Some(Command::Build {
+            file,
+            output,
+            release,
+            target,
+            wasm,
+            emit_bc,
+        }) => build::cmd_build(
+            &file,
+            &build::BuildOpts {
+                output,
+                release,
+                target,
+                wasm,
+                emit_bc,
+            },
+        ),
     }
 }
 
@@ -74,7 +132,7 @@ fn cmd_query(source: &str) -> std::process::ExitCode {
             println!("{t}");
             std::process::ExitCode::SUCCESS
         }
-        Ok(VmOutput::Records(records)) => {
+        Ok(VmOutput::Records(records)) | Ok(VmOutput::Rows(records)) => {
             print!("{}", render_records(&records));
             println!("({} record(s))", records.len());
             std::process::ExitCode::SUCCESS
@@ -203,6 +261,7 @@ pub fn pretty_expr(e: &Expr) -> String {
         Expr::StringLit(s, _) => format!("{s:?}"),
         Expr::BoolLit(b, _) => b.to_string(),
         Expr::Ident(name, _) => name.clone(),
+        Expr::Var(name, _) => format!("${name}"),
         Expr::Wildcard(_) => "*".to_string(),
         Expr::Unary { op, operand, .. } => {
             let o = match op {

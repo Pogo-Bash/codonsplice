@@ -7,11 +7,11 @@ export function useSpliceQL() {
   const error = ref(null)
   const loading = ref(false)
 
-  async function execute({ query, files }) {
+  async function execute({ query, files, vars }) {
     loading.value = true
     error.value = null
     try {
-      result.value = await csExecute({ query, files })
+      result.value = await csExecute({ query, files, vars })
       return result.value
     } catch (e) {
       error.value = e

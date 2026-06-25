@@ -46,6 +46,7 @@ pub enum OpCode {
     GetField,     // u16 name_idx   (field access on stack top)
     Index,        //                (subscript: [obj, key] -> value)
     LoadWildcard, //                (SELECT *)
+    LoadVar,      // u16 name_idx   ($name template variable)
     Neg,
     Not,
     Add,
@@ -96,6 +97,7 @@ impl OpCode {
             GetField => 0x05,
             Index => 0x06,
             LoadWildcard => 0x07,
+            LoadVar => 0x08,
             Neg => 0x10,
             Not => 0x11,
             Add => 0x12,
@@ -142,6 +144,7 @@ impl OpCode {
             0x05 => GetField,
             0x06 => Index,
             0x07 => LoadWildcard,
+            0x08 => LoadVar,
             0x10 => Neg,
             0x11 => Not,
             0x12 => Add,
@@ -183,7 +186,7 @@ impl OpCode {
         use OpCode::*;
         match self {
             // u16 operand
-            LoadConst | LoadField | GetField | SetParam | Project | OrderBy | And | Or
+            LoadConst | LoadField | GetField | LoadVar | SetParam | Project | OrderBy | And | Or
             | JumpIfFalse | Jump => 2,
             // u8 + u16
             OpenSource | WriteInto => 3,
@@ -207,6 +210,7 @@ impl OpCode {
             GetField => "GET_FIELD",
             Index => "INDEX",
             LoadWildcard => "LOAD_WILDCARD",
+            LoadVar => "LOAD_VAR",
             Neg => "NEG",
             Not => "NOT",
             Add => "ADD",
@@ -533,6 +537,8 @@ const VARIANT_PARAMS: &[ParamSpec] = &[
     ParamSpec { name: "min_mapping_quality", ty: ParamType::U8 },
     ParamSpec { name: "min_variant_reads", ty: ParamType::I64 },
     ParamSpec { name: "min_allele_freq", ty: ParamType::F64 },
+    // `min_af` is the documented short alias for `min_allele_freq`.
+    ParamSpec { name: "min_af", ty: ParamType::F64 },
     ParamSpec { name: "min_strand_bias", ty: ParamType::F64 },
 ];
 
@@ -778,30 +784,41 @@ impl Compiler {
         for (key, value_expr) in with {
             let span = value_expr.span();
 
-            // Value must be a compile-time constant.
-            let value =
-                const_eval(value_expr).ok_or(CompileError::NonConstantParam { span })?;
-
-            // Key must be a known parameter for this CALL op.
-            let spec = specs.iter().find(|p| p.name == key).ok_or_else(|| {
+            // Key must be a known parameter for this CALL op (checked for both
+            // constant and variable values).
+            let _spec = specs.iter().find(|p| p.name == key).ok_or_else(|| {
                 CompileError::UnknownParam {
                     key: key.clone(),
                     span,
                 }
             })?;
 
-            // Value must match (or coerce to) the expected type.
-            let coerced =
-                spec.ty
-                    .coerce(&value)
-                    .ok_or_else(|| CompileError::ParamTypeMismatch {
-                        key: key.clone(),
-                        expected: spec.ty.expected_name(),
-                        got: value.type_name(),
-                        span,
-                    })?;
+            // A `$var` value defers to runtime: emit LOAD_VAR, then SET_PARAM,
+            // which coerces against the param type when the call runs.
+            if let Expr::Var(name, _) = value_expr {
+                let nidx = self.intern(Value::Str(Rc::from(name.as_str())));
+                self.emit(OpCode::LoadVar, span);
+                self.emit_u16(nidx);
+                let kidx = self.intern(Value::Str(Rc::from(key.as_str())));
+                self.emit(OpCode::SetParam, span);
+                self.emit_u16(kidx);
+                continue;
+            }
 
-            // Emit: push value, then SET_PARAM key.
+            // Otherwise the value must be a compile-time constant of the right
+            // type (coercing Int -> Float where the param expects a float).
+            let value =
+                const_eval(value_expr).ok_or(CompileError::NonConstantParam { span })?;
+            let coerced = _spec
+                .ty
+                .coerce(&value)
+                .ok_or_else(|| CompileError::ParamTypeMismatch {
+                    key: key.clone(),
+                    expected: _spec.ty.expected_name(),
+                    got: value.type_name(),
+                    span,
+                })?;
+
             let vidx = self.intern(coerced);
             self.emit(OpCode::LoadConst, span);
             self.emit_u16(vidx);
@@ -858,11 +875,20 @@ impl Compiler {
     fn append_projection(&mut self, items: &[SelectItem]) -> Result<usize, CompileError> {
         let exprs: Vec<&Expr> = items.iter().map(|i| &i.expr).collect();
         let regions = self.compile_region(&exprs)?;
+        // Each projected column gets a name: the explicit `AS` alias, or a name
+        // derived from the expression (`chrom` for `SELECT chrom`, `*` for the
+        // wildcard, `colN` for a computed expression). Phase 4 stored `0xFFFF`
+        // for "no alias"; Phase 5 always records a usable column name so the
+        // materializer can key the Row output.
         let alias_idxs: Vec<u16> = items
             .iter()
-            .map(|i| match &i.alias {
-                Some(a) => self.intern(Value::Str(Rc::from(a.as_str()))),
-                None => 0xFFFF,
+            .enumerate()
+            .map(|(i, item)| {
+                let name = match &item.alias {
+                    Some(a) => a.clone(),
+                    None => default_col_name(&item.expr, i),
+                };
+                self.intern(Value::Str(Rc::from(name.as_str())))
             })
             .collect();
 
@@ -937,6 +963,11 @@ impl Compiler {
             Expr::Ident(name, s) => {
                 let idx = self.intern(Value::Str(Rc::from(name.as_str())));
                 self.emit(OpCode::LoadField, *s);
+                self.emit_u16(idx);
+            }
+            Expr::Var(name, s) => {
+                let idx = self.intern(Value::Str(Rc::from(name.as_str())));
+                self.emit(OpCode::LoadVar, *s);
                 self.emit_u16(idx);
             }
             Expr::Wildcard(s) => self.emit(OpCode::LoadWildcard, *s),
@@ -1200,6 +1231,17 @@ fn flip_op(op: &BinOp) -> BinOp {
     }
 }
 
+/// Derive a column name for an un-aliased `SELECT` item.
+fn default_col_name(expr: &Expr, index: usize) -> String {
+    match expr {
+        Expr::Ident(name, _) => name.clone(),
+        Expr::Var(name, _) => name.clone(),
+        Expr::FieldAccess { field, .. } => field.clone(),
+        Expr::Wildcard(_) => "*".to_string(),
+        _ => format!("col{}", index + 1),
+    }
+}
+
 fn span_of_items(items: &[SelectItem], fallback: Span) -> Span {
     items.first().map(|i| i.span).unwrap_or(fallback)
 }
@@ -1292,7 +1334,7 @@ fn disasm_one(
 
     match op {
         OpCode::LoadConst => format!("{:<13}{}", op.name(), konst(read_u16(pc))),
-        OpCode::LoadField | OpCode::GetField => {
+        OpCode::LoadField | OpCode::GetField | OpCode::LoadVar => {
             format!("{:<13}{}", op.name(), konst(read_u16(pc)))
         }
         OpCode::And | OpCode::Or | OpCode::JumpIfFalse | OpCode::Jump => {

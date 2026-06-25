@@ -9,7 +9,7 @@ members = ["crates/codonsplice-core", "crates/splice-cli"]
 # excluded from the native workspace so `cargo build`/`cargo test` on the host
 # don't try to compile js-sys/web-sys; build it with
 # `cargo build -p codonsplice-wasm --target wasm32-unknown-unknown` or wasm-pack.
-exclude = ["crates/spliceql", "crates/codonsplice-wasm"]
+exclude = ["crates/spliceql", "crates/codonsplice-wasm", "crates/spliceql-grammar"]
 
 [profile.release]
 opt-level = 3

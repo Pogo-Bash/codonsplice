@@ -7,11 +7,11 @@ export function createSpliceQL() {
   const error = writable(null)
   const loading = writable(false)
 
-  async function execute({ query, files }) {
+  async function execute({ query, files, vars }) {
     loading.set(true)
     error.set(null)
     try {
-      const r = await csExecute({ query, files })
+      const r = await csExecute({ query, files, vars })
       result.set(r)
       return r
     } catch (e) {

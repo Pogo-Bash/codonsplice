@@ -114,9 +114,68 @@ jobs:
           sleep 20
           cargo publish -p codonsplice-core --locked || echo "core already published"
 
+  # ── 4b. Verify the compiled binary against the sample BAM ──────────────────
+  verify:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: actions/download-artifact@v4
+        with: { name: splice-linux-x86_64, path: . }
+      - name: Fetch the sample BAM
+        run: |
+          mkdir -p sample
+          base="https://raw.githubusercontent.com/Pogo-Bash/cnvlens/master/public/sample-data"
+          curl -fsSL "$base/NA12878_EGFR.bam" -o sample/NA12878_EGFR.bam
+          curl -fsSL "$base/NA12878_EGFR.bam.bai" -o sample/NA12878_EGFR.bam.bai
+      - name: Run a region variant query and check a known call
+        run: |
+          chmod +x splice-linux-x86_64
+          out=$(./splice-linux-x86_64 query \
+            'FROM bam "sample/NA12878_EGFR.bam" WHERE chr = "7" CALL variants LIMIT 50')
+          echo "$out"
+          # A known EGFR-region SNV from the sample (chr7:55002631).
+          echo "$out" | grep -q '"pos":55002631' \
+            || { echo "::error::expected variant chr7:55002631 not found"; exit 1; }
+          echo "✓ compiled binary produced the expected variant"
+
+  # ── 4c. winget manifest (Windows package manager) ──────────────────────────
+  winget:
+    needs: build-binaries
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate winget manifest
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          url="https://github.com/Pogo-Bash/codonsplice/releases/download/${GITHUB_REF_NAME}/splice-windows-x86_64.exe"
+          mkdir -p manifests
+          cat > manifests/Pogo-Bash.CodonSplice.yaml <<EOF
+          PackageIdentifier: Pogo-Bash.CodonSplice
+          PackageVersion: ${ver}
+          PackageName: CodonSplice
+          Publisher: Pogo-Bash
+          License: MIT
+          ShortDescription: SpliceQL genomic query engine (splice CLI)
+          InstallerType: portable
+          Installers:
+            - Architecture: x64
+              InstallerUrl: ${url}
+              InstallerSha256: PLACEHOLDER_SHA256
+          ManifestType: singleton
+          ManifestVersion: 1.6.0
+          EOF
+          cat manifests/Pogo-Bash.CodonSplice.yaml
+      - uses: actions/upload-artifact@v4
+        with: { name: winget-manifest, path: manifests/ }
+      # Submission to microsoft/winget-pkgs is a manual/wingetcreate follow-up:
+      #   wingetcreate submit --token $WINGET_TOKEN manifests/
+
   # ── 5. GitHub Release with all artifacts + install.sh ──────────────────────
   release:
-    needs: [build-binaries, build-wasm]
+    needs: [build-binaries, build-wasm, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

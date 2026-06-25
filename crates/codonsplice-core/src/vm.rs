@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 
 use cnvlens_core::error::CoreError;
 use cnvlens_core::model::{CoverageOptions, VariantOptions};
-use cnvlens_core::{bam, coverage, reference_list, variants, AlnRecord};
+use cnvlens_core::{bam, coverage, reference_list, variants, vcf, AlnRecord};
 use spliceql::ast::Format;
 
 use crate::compiler::{OpCode, Program, Value};
 use crate::materialize::materialize;
 use crate::runtime::{
-    AlnRow, Cursor, Dataset, DatasetInner, QueryOptions, Record, RuntimeValue,
+    AlnRow, Cursor, Dataset, DatasetInner, ProjItem, QueryOptions, Record, RuntimeValue, VarMap,
 };
 
 pub use crate::runtime::RuntimeValue as Runtime; // (kept for any external imports)
@@ -80,8 +80,10 @@ pub enum VmOutput {
     Ready(Program),
     /// Textual output (`CALL_HEADER`, or a `WRITE_INTO` summary).
     Text(String),
-    /// A materialized record stream — the common case for `CALL_*` queries.
+    /// A materialized record stream — `CALL_*` queries with no `SELECT`.
     Records(Vec<Record>),
+    /// Projected rows — `CALL_*` queries with an explicit column `SELECT`.
+    Rows(Vec<Record>),
 }
 
 /// A runtime error.
@@ -105,6 +107,8 @@ pub enum VmError {
     },
     /// `INTO` a format with no writer yet.
     UnsupportedInto(String),
+    /// A `$variable` referenced by the query has no binding in the VarMap.
+    UnboundVariable { name: String, pc: usize },
     /// A still-stubbed opcode (kept for any remaining unwired paths).
     NotYetImplemented(String),
 }
@@ -132,6 +136,9 @@ impl std::fmt::Display for VmError {
                 write!(f, "wrong source format: expected {expected}, got {got}")
             }
             VmError::UnsupportedInto(fmt) => write!(f, "no writer for INTO {fmt}"),
+            VmError::UnboundVariable { name, pc } => {
+                write!(f, "unbound variable ${name} at pc {pc}")
+            }
             VmError::NotYetImplemented(op) => write!(f, "opcode {op} is not implemented"),
         }
     }
@@ -183,6 +190,8 @@ pub struct Vm {
     pending_params: Vec<(Arc<str>, RuntimeValue)>,
     /// Set by `WRITE_INTO`; turns `HALT` into a textual summary.
     wrote: Option<String>,
+    /// `$name` template variable bindings, resolved by `LOAD_VAR`.
+    vars: VarMap,
 }
 
 impl Vm {
@@ -209,7 +218,14 @@ impl Vm {
             io,
             pending_params: Vec::new(),
             wrote: None,
+            vars: VarMap::default(),
         }
+    }
+
+    /// Attach template-variable bindings (resolved by `LOAD_VAR`).
+    pub fn with_vars(mut self, vars: VarMap) -> Self {
+        self.vars = vars;
+        self
     }
 
     /// Construct an evaluation-only VM over a (predicate / order-key) program.
@@ -254,8 +270,20 @@ impl Vm {
         }
         match self.stack.last().cloned() {
             Some(RuntimeValue::Cursor(cursor)) => {
+                // A non-wildcard SELECT projects to Rows; otherwise Records.
+                let proj_active = {
+                    let g = cursor.lock().unwrap();
+                    g.projection
+                        .as_ref()
+                        .map(|items| !items.iter().any(|i| i.wildcard))
+                        .unwrap_or(false)
+                };
                 let records = materialize(cursor, "").map_err(VmError::core)?;
-                Ok(VmOutput::Records(records))
+                if proj_active {
+                    Ok(VmOutput::Rows(records))
+                } else {
+                    Ok(VmOutput::Records(records))
+                }
             }
             Some(RuntimeValue::Record(r)) => match &*r {
                 Record::Header(refs) => Ok(VmOutput::Text(format_header(refs))),
@@ -315,10 +343,11 @@ impl Vm {
     // ── Pipeline opcodes ─────────────────────────────────────────────────────
 
     fn op_open_source(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
         self.pc += 1;
         let fmt = format_from_byte(self.read_u8());
         let path_idx = self.read_u16();
-        let path = self.const_str(path_idx).to_string();
+        let path = self.resolve_path(&self.const_str(path_idx), pc0)?;
         let bytes = self.io.read_file(&path).map_err(VmError::io)?;
 
         let data = match fmt {
@@ -365,7 +394,8 @@ impl Vm {
             }
         };
         let region = self.program.region.clone();
-        let cursor = Cursor::new(ds, region);
+        let mut cursor = Cursor::new(ds, region);
+        cursor.vars = self.vars.clone();
         self.stack
             .push(RuntimeValue::Cursor(Arc::new(Mutex::new(cursor))));
         Ok(())
@@ -383,11 +413,40 @@ impl Vm {
     }
 
     fn op_project(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
         self.pc += 1;
-        // Read the projection table offset. Phase 4 stores the projection but
-        // applies it as identity (SELECT * semantics); column projection to an
-        // arbitrary row type is deferred (see materialize docs).
-        let _table_off = self.read_u16();
+        let table_off = self.read_u16() as usize;
+
+        // Table layout (from the compiler's append_projection):
+        //   [u16 count][per item: u16 expr_off, u16 expr_len, u16 name_idx]
+        // Collect the triples first (immutable borrow of code), then build the
+        // sub-programs (which also borrow self).
+        let code = &self.program.code;
+        let count = u16::from_le_bytes([code[table_off], code[table_off + 1]]) as usize;
+        let mut triples = Vec::with_capacity(count);
+        let mut p = table_off + 2;
+        for _ in 0..count {
+            let expr_off = u16::from_le_bytes([code[p], code[p + 1]]) as usize;
+            let expr_len = u16::from_le_bytes([code[p + 2], code[p + 3]]) as usize;
+            let name_idx = u16::from_le_bytes([code[p + 4], code[p + 5]]);
+            triples.push((expr_off, expr_len, name_idx));
+            p += 6;
+        }
+
+        let items: Vec<ProjItem> = triples
+            .into_iter()
+            .map(|(off, len, name_idx)| {
+                let name = self.const_str(name_idx).to_string();
+                ProjItem {
+                    prog: self.extract_subprogram(off, len),
+                    wildcard: name == "*",
+                    name,
+                }
+            })
+            .collect();
+
+        let cursor = self.peek_cursor(pc0)?;
+        cursor.lock().unwrap().projection = Some(items);
         Ok(())
     }
 
@@ -448,21 +507,25 @@ impl Vm {
             (c.dataset.clone(), c.region.clone())
         };
 
-        let (records, options) = match kind {
+        match kind {
+            // Variant calling is deferred to materialization (so the resolved
+            // LIMIT can short-circuit the pileup) and dispatches by source
+            // format: a VCF passes its already-called variants straight through;
+            // a BAM runs the streaming pileup.
             CallKind::Variants => {
-                let opts = self.build_variant_options();
-                let bytes = self.require_bam(&ds, "variants")?;
-                let vars = match (&region, ds.bai_bytes()) {
-                    (Some(r), Some(bai)) => {
-                        variants::call_variants_region(bytes, bai, &r.to_core(), &opts)
-                    }
-                    _ => variants::collect_variants(bytes, None, &opts),
+                let is_vcf = matches!(ds.data, DatasetInner::Vcf { .. });
+                if !is_vcf && ds.bam_bytes().is_none() {
+                    return Err(VmError::SourceFormat {
+                        expected: "bam or vcf",
+                        got: format_label(&ds.format),
+                    });
                 }
-                .map_err(VmError::core)?;
-                (
-                    vars.into_iter().map(Record::Variant).collect::<Vec<_>>(),
-                    QueryOptions::Variant(opts),
-                )
+                let opts = self.build_variant_options();
+                let core_region = region.as_ref().map(|r| r.to_core());
+                let producer: crate::runtime::RecordProducer =
+                    Box::new(move |limit| variant_producer(&ds, &opts, core_region.as_ref(), is_vcf, limit));
+                let mut c = cursor.lock().unwrap();
+                c.producer = Some(producer);
             }
             CallKind::Cnv | CallKind::Coverage => {
                 let opts = self.build_coverage_options();
@@ -474,24 +537,19 @@ impl Vm {
                     _ => coverage::coverage_windows(bytes, None, &opts),
                 }
                 .map_err(VmError::core)?;
-                (
-                    windows
-                        .into_iter()
-                        .map(Record::CoverageWindow)
-                        .collect::<Vec<_>>(),
-                    QueryOptions::Coverage(opts),
-                )
+                let records = windows.into_iter().map(Record::CoverageWindow).collect();
+                let mut c = cursor.lock().unwrap();
+                c.records = Some(records);
+                c.options = QueryOptions::Coverage(opts);
             }
             CallKind::Reads => {
                 let bytes = self.require_bam(&ds, "reads")?;
                 let recs = collect_read_records(bytes, ds.bai_bytes(), &region)?;
-                (recs, QueryOptions::Reads)
+                let mut c = cursor.lock().unwrap();
+                c.records = Some(recs);
+                c.options = QueryOptions::Reads;
             }
-        };
-
-        let mut c = cursor.lock().unwrap();
-        c.records = Some(records);
-        c.options = options;
+        }
         Ok(())
     }
 
@@ -522,7 +580,7 @@ impl Vm {
         self.pc += 1;
         let fmt = format_from_byte(self.read_u8());
         let path_idx = self.read_u16();
-        let path = self.const_str(path_idx).to_string();
+        let path = self.resolve_path(&self.const_str(path_idx), pc0)?;
 
         let cursor = match self.pop(pc0)? {
             RuntimeValue::Cursor(c) => c,
@@ -562,7 +620,9 @@ impl Vm {
                 "min_variant_reads" => {
                     o.min_variant_reads = as_i64(val).unwrap_or(o.min_variant_reads)
                 }
-                "min_allele_freq" => o.min_allele_freq = as_f64(val).unwrap_or(o.min_allele_freq),
+                "min_allele_freq" | "min_af" => {
+                    o.min_allele_freq = as_f64(val).unwrap_or(o.min_allele_freq)
+                }
                 "min_strand_bias" => o.min_strand_bias = as_f64(val).unwrap_or(o.min_strand_bias),
                 _ => {}
             }
@@ -633,6 +693,29 @@ impl Vm {
         }
     }
 
+    /// Resolve a `FROM`/`INTO` path. A `$name` path is looked up in the VarMap
+    /// (the bound value is stringified); any other path is used verbatim.
+    fn resolve_path(&self, raw: &str, pc: usize) -> Result<String, VmError> {
+        if let Some(name) = raw.strip_prefix('$') {
+            match self.vars.get(name) {
+                Some(RuntimeValue::Str(s)) => Ok(s.to_string()),
+                Some(RuntimeValue::Int(n)) => Ok(n.to_string()),
+                Some(RuntimeValue::Float(x)) => Ok(x.to_string()),
+                Some(other) => Err(VmError::TypeMismatch {
+                    expected: "string path",
+                    got: other.type_name(),
+                    pc,
+                }),
+                None => Err(VmError::UnboundVariable {
+                    name: name.to_string(),
+                    pc,
+                }),
+            }
+        } else {
+            Ok(raw.to_string())
+        }
+    }
+
     /// Extract a per-record sub-program (offsets relative to its own start) into
     /// a standalone [`Program`] sharing this program's constant pool, runnable
     /// from `pc = 0`.
@@ -688,6 +771,19 @@ impl Vm {
                 self.stack.push(RuntimeValue::Null);
             }
             OpCode::LoadWildcard => self.stack.push(RuntimeValue::Null),
+            OpCode::LoadVar => {
+                let idx = self.read_u16();
+                let name = self.const_str(idx);
+                match self.vars.get(&name) {
+                    Some(v) => self.stack.push(v.clone()),
+                    None => {
+                        return Err(VmError::UnboundVariable {
+                            name: name.to_string(),
+                            pc: pc0,
+                        })
+                    }
+                }
+            }
             OpCode::Neg => {
                 let a = self.pop(pc0)?;
                 let r = match a {
@@ -797,16 +893,58 @@ fn from_const(v: &Value) -> RuntimeValue {
     }
 }
 
+// `as_i64`/`as_f64` also parse string-typed variable values, so `$min_af`
+// supplied as the string "0.05" (e.g. an untyped CLI arg) coerces to a number
+// where a numeric param is expected (the SET_PARAM coercion rule).
 fn as_i64(v: &RuntimeValue) -> Option<i64> {
     match v {
         RuntimeValue::Int(n) => Some(*n),
         RuntimeValue::Float(x) => Some(*x as i64),
+        RuntimeValue::Str(s) => s.trim().parse().ok(),
         _ => None,
     }
 }
 
 fn as_f64(v: &RuntimeValue) -> Option<f64> {
-    v.as_f64()
+    match v {
+        RuntimeValue::Int(n) => Some(*n as f64),
+        RuntimeValue::Float(x) => Some(*x),
+        RuntimeValue::Str(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Produce variant records for `CALL_VARIANTS`, dispatching by source format.
+/// A VCF streams its already-called variants (region-filtered); a BAM runs the
+/// streaming pileup with the early-exit `limit`.
+fn variant_producer(
+    ds: &Dataset,
+    opts: &VariantOptions,
+    region: Option<&cnvlens_core::model::Region>,
+    is_vcf: bool,
+    limit: Option<usize>,
+) -> Result<Vec<Record>, CoreError> {
+    if is_vcf {
+        let bytes = match &ds.data {
+            DatasetInner::Vcf { bytes } => bytes,
+            _ => unreachable!("is_vcf implies a VCF dataset"),
+        };
+        let mut out = Vec::new();
+        for v in vcf::stream_vcf(bytes, region) {
+            out.push(Record::Variant(v?));
+            if let Some(l) = limit {
+                if out.len() >= l {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    } else {
+        let bytes = ds.bam_bytes().expect("BAM checked at CALL time");
+        let vars: Vec<_> = variants::stream_variants(bytes, ds.bai_bytes(), opts, region, limit)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(vars.into_iter().map(Record::Variant).collect())
+    }
 }
 
 /// Collect read records, optionally BAI-seeked, annotating each with its
@@ -925,6 +1063,27 @@ pub fn record_to_json(r: &Record) -> serde_json::Value {
                 .collect();
             json!({ "references": list })
         }
+        Record::Row(cols) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in cols {
+                map.insert(k.clone(), runtime_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+    }
+}
+
+/// Convert a [`RuntimeValue`] scalar to JSON (handles map to null).
+fn runtime_to_json(v: &RuntimeValue) -> serde_json::Value {
+    use serde_json::Value as J;
+    match v {
+        RuntimeValue::Int(n) => J::from(*n),
+        RuntimeValue::Float(x) => serde_json::Number::from_f64(*x)
+            .map(J::Number)
+            .unwrap_or(J::Null),
+        RuntimeValue::Str(s) => J::String(s.to_string()),
+        RuntimeValue::Bool(b) => J::Bool(*b),
+        _ => J::Null,
     }
 }
 

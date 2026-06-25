@@ -202,9 +202,9 @@ pub struct Cursor {
     pub dataset: Arc<Dataset>,
     /// Compiled `WHERE` sub-program, run per record (top-of-stack truthy keeps).
     pub predicate: Option<Program>,
-    /// Compiled `SELECT` projection (Phase 4: stored; identity-applied — see
-    /// `materialize`).
-    pub projection: Option<Program>,
+    /// Compiled `SELECT` projection columns. `None` is SELECT * / no projection.
+    /// (Phase 5 makes this real; Phase 4 stored a single `Option<Program>`.)
+    pub projection: Option<Vec<ProjItem>>,
     /// Statically-extracted region for BAI seeking.
     pub region: Option<Region>,
     /// The CALL operation + tuned params.
@@ -213,8 +213,30 @@ pub struct Cursor {
     pub order: Option<(Program, bool)>,
     /// `LIMIT` row cap.
     pub limit: Option<i64>,
-    /// Rows produced by the `CALL_*` opcode, pending predicate/order/limit.
+    /// Rows produced eagerly by a `CALL_*` opcode (CNV/coverage/reads/header),
+    /// pending predicate/order/limit.
     pub records: Option<Vec<Record>>,
+    /// A deferred record producer (used by `CALL_VARIANTS`): run at
+    /// materialization time with the resolved `LIMIT`, so the variant pileup can
+    /// short-circuit early. Takes an optional row limit and yields records.
+    pub producer: Option<RecordProducer>,
+    /// Template variable bindings, copied from the VM at `SCAN` so the
+    /// per-record predicate/projection/order sub-programs can resolve `$vars`.
+    pub vars: VarMap,
+}
+
+/// A deferred producer of records, invoked by materialization with the resolved
+/// `LIMIT` (so e.g. variant calling can stop piling up after N variants).
+pub type RecordProducer =
+    Box<dyn FnOnce(Option<usize>) -> Result<Vec<Record>, cnvlens_core::error::CoreError>>;
+
+/// One projected `SELECT` column: a compiled sub-program plus its output name.
+/// `wildcard` marks `SELECT *` (pass the whole record through unchanged).
+#[derive(Debug, Clone)]
+pub struct ProjItem {
+    pub prog: Program,
+    pub name: String,
+    pub wildcard: bool,
 }
 
 impl Cursor {
@@ -229,6 +251,8 @@ impl Cursor {
             order: None,
             limit: None,
             records: None,
+            producer: None,
+            vars: VarMap::default(),
         }
     }
 }
@@ -254,6 +278,9 @@ pub enum Record {
     Variant(Variant),
     CoverageWindow(CoverageWindow),
     Header(Vec<(String, usize)>),
+    /// A projected output row (from `SELECT col, ...`): an ordered list of
+    /// `(column_name, value)` pairs.
+    Row(Vec<(String, RuntimeValue)>),
 }
 
 impl Record {
@@ -263,6 +290,44 @@ impl Record {
             Record::Variant(_) => "variant",
             Record::CoverageWindow(_) => "coverage_window",
             Record::Header(_) => "header",
+            Record::Row(_) => "row",
+        }
+    }
+
+    /// Convert this record into a [`Record::Row`] of its natural columns
+    /// (already-projected `Row`s are returned unchanged). Used when projection
+    /// is absent but a flat row representation is wanted.
+    pub fn into_row(self) -> Record {
+        match self {
+            Record::Row(_) => self,
+            Record::Variant(ref v) => Record::Row(vec![
+                ("chrom".into(), self.get_field("chrom")),
+                ("pos".into(), RuntimeValue::Int(v.pos)),
+                ("ref".into(), self.get_field("ref")),
+                ("alt".into(), self.get_field("alt")),
+                ("qual".into(), RuntimeValue::Float(v.qual)),
+                ("depth".into(), RuntimeValue::Int(v.depth)),
+                ("allele_freq".into(), RuntimeValue::Float(v.allele_freq)),
+            ]),
+            Record::CoverageWindow(ref w) => Record::Row(vec![
+                ("chrom".into(), self.get_field("chrom")),
+                ("start".into(), RuntimeValue::Int(w.start)),
+                ("end".into(), RuntimeValue::Int(w.end)),
+                ("coverage".into(), RuntimeValue::Int(w.coverage)),
+                ("normalized".into(), RuntimeValue::Float(w.normalized)),
+            ]),
+            Record::Alignment(ref a) => Record::Row(vec![
+                ("chrom".into(), RuntimeValue::Str(Arc::from(a.chrom.as_str()))),
+                ("pos".into(), RuntimeValue::Int(a.aln.pos)),
+                ("mapq".into(), RuntimeValue::Int(a.aln.mapq as i64)),
+                ("flag".into(), RuntimeValue::Int(a.aln.flag as i64)),
+                ("depth".into(), RuntimeValue::Int(a.depth)),
+            ]),
+            Record::Header(refs) => Record::Row(
+                refs.into_iter()
+                    .map(|(n, l)| (n, RuntimeValue::Int(l as i64)))
+                    .collect(),
+            ),
         }
     }
 
@@ -275,6 +340,11 @@ impl Record {
             Record::Variant(v) => variant_field(v, name),
             Record::CoverageWindow(w) => window_field(w, name),
             Record::Header(_) => RuntimeValue::Null,
+            Record::Row(cols) => cols
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+                .unwrap_or(RuntimeValue::Null),
         }
     }
 }
@@ -310,6 +380,15 @@ fn variant_field(v: &Variant, name: &str) -> RuntimeValue {
         "af" | "allele_freq" => Float(v.allele_freq),
         "strand_bias" => Float(v.strand_bias),
         "kind" => Str(Arc::from(v.kind.as_str())),
+        // VCF-sourced fields (None for pileup-called variants).
+        "filter" => match &v.filter {
+            Some(f) => Str(Arc::from(f.as_str())),
+            None => Str(Arc::from("PASS")),
+        },
+        "id" => match &v.id {
+            Some(i) => Str(Arc::from(i.as_str())),
+            None => Str(Arc::from(".")),
+        },
         _ => Null,
     }
 }
@@ -324,5 +403,26 @@ fn window_field(w: &CoverageWindow, name: &str) -> RuntimeValue {
         "normalized" => Float(w.normalized),
         "masked" => Bool(w.masked.unwrap_or(false)),
         _ => Null,
+    }
+}
+
+// ── Template variables ───────────────────────────────────────────────────────
+
+/// Runtime bindings for `$name` template variables, resolved by `LOAD_VAR`.
+/// Populated by `splice run` (from CLI args) or the WASM `vars` parameter.
+#[derive(Debug, Clone, Default)]
+pub struct VarMap(pub HashMap<String, RuntimeValue>);
+
+impl VarMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, name: impl Into<String>, value: RuntimeValue) {
+        self.0.insert(name.into(), value);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&RuntimeValue> {
+        self.0.get(name)
     }
 }

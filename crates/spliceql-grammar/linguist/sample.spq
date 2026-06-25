@@ -1,0 +1,20 @@
+#!/usr/bin/env splice
+-- vim: set ft=sql:
+-- @name: egfr-variant-caller
+-- @version: 1.0.0
+-- @description: Call variants in the EGFR gene region
+-- @input: bam required "Input BAM file"
+-- @input: min_af optional float 0.05 "Minimum allele frequency"
+-- @output: vcf "Variant calls"
+
+-- Call high-confidence variants in EGFR (chr7:55,000,000-55,300,000)
+FROM bam $bam
+WHERE chr = "7"
+  AND pos >= 55000000
+  AND pos <= 55300000
+  AND depth > 30
+CALL variants
+WITH min_af = $min_af,
+     min_depth = 10,
+     min_base_quality = 20
+INTO vcf $output

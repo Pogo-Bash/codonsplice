@@ -24,15 +24,28 @@ export class CodonSplice {
   check(source: string): string | null
 
   /**
-   * Execute a query. `files` is `{ "name.bam": Uint8Array, "name.bam.bai": Uint8Array }`.
-   * Returns an array of records, or `{ text: string }` for header/INTO queries.
+   * Execute a query. `files` is `{ "name.bam": Uint8Array, ... }`; `vars` binds
+   * `$variables` as `{ name: value }`. Returns an array of records/rows, or
+   * `{ text: string }` for header/INTO queries.
    */
-  execute(source: string, files: Record<string, Uint8Array>): CodonSpliceRecord[] | { text: string }
+  execute(
+    source: string,
+    files: Record<string, Uint8Array>,
+    vars: Record<string, string | number | boolean>,
+  ): CodonSpliceRecord[] | { text: string }
+
+  /** Execute pre-compiled `.spq.bc` bytecode against files + vars. */
+  execute_bytecode(
+    bytecode: Uint8Array,
+    files: Record<string, Uint8Array>,
+    vars: Record<string, string | number | boolean>,
+  ): CodonSpliceRecord[] | { text: string }
 
   /** Stream results: onRecord per record, onDone at completion, onError on failure. */
   stream(
     source: string,
     files: Record<string, Uint8Array>,
+    vars: Record<string, string | number | boolean>,
     onRecord: (record: CodonSpliceRecord) => void,
     onDone: () => void,
     onError: (error: unknown) => void,
