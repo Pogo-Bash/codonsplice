@@ -9,8 +9,14 @@ use codonsplice_core::compile;
 use crate::directive::{parse_directives, scan_vars, Directives, InputDecl, VarKind};
 
 /// Path to the codonsplice-core crate, embedded at compile time so generated
-/// binaries can depend on it by path during local builds.
+/// binaries can depend on it by path during local (in-checkout) builds.
 const CORE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../codonsplice-core");
+/// Public repo + release tag used when CORE_PATH is absent — i.e. a distributed
+/// `splice` binary, whose embedded CARGO_MANIFEST_DIR points at the build
+/// machine. Cargo clones the repo and initializes its submodules (cnvlens,
+/// spliceql), which resolves codonsplice-core's relative path dependencies.
+const REPO_URL: &str = "https://github.com/Pogo-Bash/codonsplice.git";
+const VERSION_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const TEMPLATE_CARGO: &str = include_str!("../../../templates/binary/Cargo.toml.tmpl");
 const TEMPLATE_MAIN: &str = include_str!("../../../templates/binary/src/main.rs.tmpl");
 
@@ -135,7 +141,7 @@ fn scaffold(
     let cargo = TEMPLATE_CARGO
         .replace("{{name}}", name)
         .replace("{{version}}", version)
-        .replace("{{core_path}}", CORE_PATH);
+        .replace("{{core_dep}}", &core_dependency());
     std::fs::write(dir.join("Cargo.toml"), cargo).map_err(|e| e.to_string())?;
 
     let bc_bytes = bc
@@ -150,6 +156,21 @@ fn scaffold(
     std::fs::write(dir.join("src").join("main.rs"), main).map_err(|e| e.to_string())?;
 
     Ok(dir)
+}
+
+/// The `codonsplice-core = …` dependency line for the generated crate.
+///
+/// Prefers a path dep when the sibling crate is present next to this binary's
+/// source (developer checkout); otherwise pins the tagged release on GitHub so
+/// `splice build` works from a distributed binary. Set `SPLICE_BUILD_FORCE_GIT=1`
+/// to force the git form — used to exercise the distributed path from a checkout.
+fn core_dependency() -> String {
+    let force_git = std::env::var_os("SPLICE_BUILD_FORCE_GIT").is_some();
+    if !force_git && Path::new(CORE_PATH).exists() {
+        format!("codonsplice-core = {{ path = {CORE_PATH:?} }}")
+    } else {
+        format!("codonsplice-core = {{ git = {REPO_URL:?}, tag = {VERSION_TAG:?} }}")
+    }
 }
 
 /// The argument-parsing preamble injected as `{{clap_args}}`.
