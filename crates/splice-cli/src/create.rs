@@ -38,13 +38,25 @@ impl Framework {
         }
     }
 
-    /// The `@codonsplice/*` wrapper package the demo imports.
+    /// The `@codonsplice/*` wrapper package the demo's hook/composable comes from.
     fn pkg(self) -> &'static str {
         match self {
             Framework::React => "@codonsplice/react",
             Framework::Vue => "@codonsplice/vue",
             Framework::Svelte => "@codonsplice/svelte",
             Framework::Astro => "@codonsplice/astro",
+        }
+    }
+
+    /// The `@codonsplice/*` packages the scaffolded demo depends on. Each wrapper
+    /// re-exports the core tooling (`compile`/`check`/`execute`) from
+    /// `@codonsplice/wasm`, so the app only needs the one wrapper package.
+    fn deps(self) -> &'static [&'static str] {
+        match self {
+            Framework::React => &["@codonsplice/react"],
+            Framework::Vue => &["@codonsplice/vue"],
+            Framework::Svelte => &["@codonsplice/svelte"],
+            Framework::Astro => &["@codonsplice/astro"],
         }
     }
 }
@@ -99,9 +111,9 @@ fn scaffold_command(fw: Framework, name: &str) -> (String, Vec<String>) {
     }
 }
 
-/// Add `@codonsplice/<framework>` to a `package.json`'s `dependencies`,
-/// returning the re-serialized JSON. `version` is pinned to `latest`.
-fn inject_dependency(pkg_json: &str, fw: Framework) -> serde_json::Result<String> {
+/// Add the framework's `@codonsplice/*` packages to a `package.json`'s
+/// `dependencies` (pinned to `latest`), returning the re-serialized JSON.
+fn inject_dependencies(pkg_json: &str, fw: Framework) -> serde_json::Result<String> {
     let mut v: serde_json::Value = serde_json::from_str(pkg_json)?;
     let obj = v.as_object_mut().ok_or_else(|| {
         serde_json::from_str::<serde_json::Value>("\"package.json is not an object\"").unwrap_err()
@@ -110,23 +122,26 @@ fn inject_dependency(pkg_json: &str, fw: Framework) -> serde_json::Result<String
         .entry("dependencies")
         .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
     if let Some(map) = deps.as_object_mut() {
-        map.insert(
-            fw.pkg().to_string(),
-            serde_json::Value::String("latest".to_string()),
-        );
+        for pkg in fw.deps() {
+            map.insert(
+                pkg.to_string(),
+                serde_json::Value::String("latest".to_string()),
+            );
+        }
     }
     let mut out = serde_json::to_string_pretty(&v)?;
     out.push('\n');
     Ok(out)
 }
 
-/// The demo file to write: a path relative to the project root and its contents.
-fn example_file(fw: Framework) -> (&'static str, &'static str) {
+/// The demo file(s) to write: `(path relative to project root, contents)`.
+/// React ships a separate stylesheet; vue/svelte/astro use scoped styles.
+fn example_files(fw: Framework) -> Vec<(&'static str, &'static str)> {
     match fw {
-        Framework::React => ("src/App.jsx", REACT_DEMO),
-        Framework::Vue => ("src/App.vue", VUE_DEMO),
-        Framework::Svelte => ("src/App.svelte", SVELTE_DEMO),
-        Framework::Astro => ("src/pages/index.astro", ASTRO_DEMO),
+        Framework::React => vec![("src/App.jsx", REACT_DEMO), ("src/splice-demo.css", DEMO_CSS)],
+        Framework::Vue => vec![("src/App.vue", VUE_DEMO)],
+        Framework::Svelte => vec![("src/App.svelte", SVELTE_DEMO)],
+        Framework::Astro => vec![("src/pages/index.astro", ASTRO_DEMO)],
     }
 }
 
@@ -167,10 +182,10 @@ pub fn cmd_create(framework: &str, name: Option<String>) -> ExitCode {
     // 2. Inject the @codonsplice dependency.
     let pkg_path = root.join("package.json");
     match std::fs::read_to_string(&pkg_path) {
-        Ok(s) => match inject_dependency(&s, fw) {
+        Ok(s) => match inject_dependencies(&s, fw) {
             Ok(updated) => {
                 if std::fs::write(&pkg_path, updated).is_ok() {
-                    println!("✓ added {} to dependencies", fw.pkg());
+                    println!("✓ added {} to dependencies", fw.deps().join(", "));
                 }
             }
             Err(e) => eprintln!("⚠ could not edit package.json ({e}); add {} manually", fw.pkg()),
@@ -178,14 +193,15 @@ pub fn cmd_create(framework: &str, name: Option<String>) -> ExitCode {
         Err(e) => eprintln!("⚠ could not read {} ({e}); add {} manually", pkg_path.display(), fw.pkg()),
     }
 
-    // 3. Write the SpliceQL demo.
-    let (rel, contents) = example_file(fw);
-    let demo = root.join(rel);
-    if let Some(parent) = demo.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if std::fs::write(&demo, contents).is_ok() {
-        println!("✓ wrote SpliceQL demo to {}", demo.display());
+    // 3. Write the SpliceQL demo (replacing the framework's default starter).
+    for (rel, contents) in example_files(fw) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&path, contents).is_ok() {
+            println!("✓ wrote {}", path.display());
+        }
     }
 
     // 4. Install dependencies (including the @codonsplice wrapper just added).
@@ -202,140 +218,431 @@ pub fn cmd_create(framework: &str, name: Option<String>) -> ExitCode {
 
 // ── Demo templates ───────────────────────────────────────────────────────────
 
-const REACT_DEMO: &str = r#"import { useState } from 'react'
-import { useSpliceQL } from '@codonsplice/react'
+const REACT_DEMO: &str = r#"import { useState, useEffect } from 'react'
+import { useSpliceQL, compile, check } from '@codonsplice/react'
+import './splice-demo.css'
+
+const SAMPLE = `FROM bam "sample.bam"
+WHERE chr = "7" AND depth > 30
+CALL variants
+WITH min_af = 0.05
+LIMIT 20`
 
 export default function App() {
   const { execute, result, error, loading } = useSpliceQL()
-  const [query, setQuery] = useState(
-    'FROM bam "sample.bam" WHERE chr = "7" CALL variants LIMIT 20'
-  )
+  const [query, setQuery] = useState(SAMPLE)
+  const [bytecode, setBytecode] = useState('')
+  const [typeError, setTypeError] = useState(null)
   const [files, setFiles] = useState({})
+  const [fileName, setFileName] = useState(null)
+
+  // Live tooling: type-check + compile to bytecode as you type — no file needed.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const err = await check(query)
+        if (cancelled) return
+        setTypeError(err)
+        setBytecode(err ? '' : await compile(query))
+      } catch (e) {
+        if (!cancelled) { setTypeError(String(e)); setBytecode('') }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [query])
 
   async function onFile(e) {
     const f = e.target.files[0]
     if (!f) return
     setFiles({ [f.name]: new Uint8Array(await f.arrayBuffer()) })
+    setFileName(f.name)
   }
 
   return (
-    <main style={{ fontFamily: 'system-ui', maxWidth: 720, margin: '2rem auto' }}>
-      <h1>SpliceQL × React</h1>
-      <p>Upload a BAM and run a SpliceQL query entirely in your browser.</p>
-      <input type="file" accept=".bam" onChange={onFile} />
+    <main className="splice">
+      <header>
+        <span className="logo">🧬 SpliceQL</span>
+        <span className="badge">× React · powered by @codonsplice/wasm</span>
+      </header>
+      <p className="tagline">
+        A genomic query engine compiled to WebAssembly. Edit the query — it
+        type-checks and compiles to bytecode live, right here in the browser.
+      </p>
+
       <textarea
+        className="editor"
         value={query}
+        spellCheck={false}
         onChange={(e) => setQuery(e.target.value)}
-        rows={5}
-        style={{ width: '100%', marginTop: 8 }}
+        rows={6}
       />
-      <button onClick={() => execute({ query, files })} disabled={loading} style={{ marginTop: 8 }}>
-        {loading ? 'Running…' : 'Run query'}
-      </button>
-      {error && <pre style={{ color: 'crimson' }}>{String(error)}</pre>}
-      {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+
+      <div className="grid">
+        <section className="card">
+          <h3>Type check</h3>
+          {typeError ? <pre className="err">{typeError}</pre> : <p className="ok">✓ valid SpliceQL</p>}
+        </section>
+        <section className="card">
+          <h3>Compiled bytecode</h3>
+          <pre className="code">{bytecode || '—'}</pre>
+        </section>
+      </div>
+
+      <div className="run">
+        <label className="file">
+          {fileName ? `📄 ${fileName}` : 'Choose a BAM…'}
+          <input type="file" accept=".bam" onChange={onFile} hidden />
+        </label>
+        <button onClick={() => execute({ query, files })} disabled={loading || !!typeError}>
+          {loading ? 'Running…' : 'Run query ▶'}
+        </button>
+      </div>
+
+      {error && <pre className="err">{String(error)}</pre>}
+      {result && <pre className="code result">{JSON.stringify(result, null, 2)}</pre>}
     </main>
   )
 }
 "#;
 
+/// Stylesheet for the React demo (vue/svelte/astro use component-scoped styles).
+const DEMO_CSS: &str = r#":root { color-scheme: dark; }
+body { margin: 0; background: #11111b; color: #cdd6f4; font-family: system-ui, sans-serif; }
+.splice { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+.splice header { display: flex; align-items: baseline; gap: .6rem; }
+.splice .logo { font-size: 1.6rem; font-weight: 700; color: #cba6f7; }
+.splice .badge { font-size: .85rem; color: #7f849c; }
+.splice .tagline { color: #a6adc8; line-height: 1.5; max-width: 60ch; }
+.splice .editor {
+  width: 100%; box-sizing: border-box; margin-top: .5rem; padding: 1rem;
+  font: 14px/1.5 ui-monospace, monospace; color: #cdd6f4; background: #181825;
+  border: 1px solid #313244; border-radius: 10px; resize: vertical;
+}
+.splice .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+.splice .card { background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+.splice .card h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #7f849c; }
+.splice .ok { color: #a6e3a1; margin: 0; }
+.splice .err { color: #f38ba8; white-space: pre-wrap; margin: 0; }
+.splice .code { color: #89dceb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; max-height: 260px; overflow: auto; }
+.splice .result { margin-top: 1rem; background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+.splice .run { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+.splice .file { cursor: pointer; padding: .5rem .9rem; border: 1px dashed #45475a; border-radius: 8px; color: #a6adc8; }
+.splice button {
+  padding: .55rem 1.1rem; font-weight: 600; color: #11111b; background: #cba6f7;
+  border: 0; border-radius: 8px; cursor: pointer;
+}
+.splice button:disabled { opacity: .5; cursor: not-allowed; }
+"#;
+
 const VUE_DEMO: &str = r#"<script setup>
-import { ref } from 'vue'
-import { useSpliceQL } from '@codonsplice/vue'
+import { ref, watch } from 'vue'
+import { useSpliceQL, compile, check } from '@codonsplice/vue'
 
 const { execute, result, error, loading } = useSpliceQL()
-const query = ref('FROM bam "sample.bam" WHERE chr = "7" CALL variants LIMIT 20')
+const query = ref(`FROM bam "sample.bam"
+WHERE chr = "7" AND depth > 30
+CALL variants
+WITH min_af = 0.05
+LIMIT 20`)
+const bytecode = ref('')
+const typeError = ref(null)
 const files = ref({})
+const fileName = ref(null)
+
+// Live tooling: type-check + compile to bytecode as you type — no file needed.
+watch(query, async (q) => {
+  try {
+    const err = await check(q)
+    typeError.value = err
+    bytecode.value = err ? '' : await compile(q)
+  } catch (e) {
+    typeError.value = String(e)
+    bytecode.value = ''
+  }
+}, { immediate: true })
 
 async function onFile(e) {
   const f = e.target.files[0]
   if (!f) return
   files.value = { [f.name]: new Uint8Array(await f.arrayBuffer()) }
+  fileName.value = f.name
 }
 </script>
 
 <template>
-  <main style="font-family: system-ui; max-width: 720px; margin: 2rem auto">
-    <h1>SpliceQL × Vue</h1>
-    <p>Upload a BAM and run a SpliceQL query entirely in your browser.</p>
-    <input type="file" accept=".bam" @change="onFile" />
-    <textarea v-model="query" rows="5" style="width: 100%; margin-top: 8px"></textarea>
-    <button @click="execute({ query, files })" :disabled="loading" style="margin-top: 8px">
-      {{ loading ? 'Running…' : 'Run query' }}
-    </button>
-    <pre v-if="error" style="color: crimson">{{ String(error) }}</pre>
-    <pre v-if="result">{{ JSON.stringify(result, null, 2) }}</pre>
+  <main class="splice">
+    <header>
+      <span class="logo">🧬 SpliceQL</span>
+      <span class="badge">× Vue · powered by @codonsplice/wasm</span>
+    </header>
+    <p class="tagline">
+      A genomic query engine compiled to WebAssembly. Edit the query — it
+      type-checks and compiles to bytecode live, right here in the browser.
+    </p>
+
+    <textarea class="editor" v-model="query" rows="6" spellcheck="false"></textarea>
+
+    <div class="grid">
+      <section class="card">
+        <h3>Type check</h3>
+        <pre v-if="typeError" class="err">{{ typeError }}</pre>
+        <p v-else class="ok">✓ valid SpliceQL</p>
+      </section>
+      <section class="card">
+        <h3>Compiled bytecode</h3>
+        <pre class="code">{{ bytecode || '—' }}</pre>
+      </section>
+    </div>
+
+    <div class="run">
+      <label class="file">
+        {{ fileName ? `📄 ${fileName}` : 'Choose a BAM…' }}
+        <input type="file" accept=".bam" @change="onFile" hidden />
+      </label>
+      <button @click="execute({ query, files })" :disabled="loading || !!typeError">
+        {{ loading ? 'Running…' : 'Run query ▶' }}
+      </button>
+    </div>
+
+    <pre v-if="error" class="err">{{ String(error) }}</pre>
+    <pre v-if="result" class="code result">{{ JSON.stringify(result, null, 2) }}</pre>
   </main>
 </template>
+
+<style>
+:root { color-scheme: dark; }
+body { margin: 0; background: #11111b; color: #cdd6f4; font-family: system-ui, sans-serif; }
+.splice { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+.splice header { display: flex; align-items: baseline; gap: .6rem; }
+.splice .logo { font-size: 1.6rem; font-weight: 700; color: #cba6f7; }
+.splice .badge { font-size: .85rem; color: #7f849c; }
+.splice .tagline { color: #a6adc8; line-height: 1.5; max-width: 60ch; }
+.splice .editor {
+  width: 100%; box-sizing: border-box; margin-top: .5rem; padding: 1rem;
+  font: 14px/1.5 ui-monospace, monospace; color: #cdd6f4; background: #181825;
+  border: 1px solid #313244; border-radius: 10px; resize: vertical;
+}
+.splice .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+.splice .card { background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+.splice .card h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #7f849c; }
+.splice .ok { color: #a6e3a1; margin: 0; }
+.splice .err { color: #f38ba8; white-space: pre-wrap; margin: 0; }
+.splice .code { color: #89dceb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; max-height: 260px; overflow: auto; }
+.splice .result { margin-top: 1rem; background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+.splice .run { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+.splice .file { cursor: pointer; padding: .5rem .9rem; border: 1px dashed #45475a; border-radius: 8px; color: #a6adc8; }
+.splice button { padding: .55rem 1.1rem; font-weight: 600; color: #11111b; background: #cba6f7; border: 0; border-radius: 8px; cursor: pointer; }
+.splice button:disabled { opacity: .5; cursor: not-allowed; }
+</style>
 "#;
 
 const SVELTE_DEMO: &str = r#"<script>
-  import { createSpliceQL } from '@codonsplice/svelte'
+  import { createSpliceQL, compile, check } from '@codonsplice/svelte'
 
   const { execute, result, error, loading } = createSpliceQL()
-  let query = 'FROM bam "sample.bam" WHERE chr = "7" CALL variants LIMIT 20'
+  let query = `FROM bam "sample.bam"
+WHERE chr = "7" AND depth > 30
+CALL variants
+WITH min_af = 0.05
+LIMIT 20`
+  let bytecode = ''
+  let typeError = null
   let files = {}
+  let fileName = null
+
+  // Live tooling: type-check + compile to bytecode as you type — no file needed.
+  $: liveCompile(query)
+  async function liveCompile(q) {
+    try {
+      const err = await check(q)
+      typeError = err
+      bytecode = err ? '' : await compile(q)
+    } catch (e) {
+      typeError = String(e)
+      bytecode = ''
+    }
+  }
 
   async function onFile(e) {
     const f = e.target.files[0]
     if (!f) return
     files = { [f.name]: new Uint8Array(await f.arrayBuffer()) }
+    fileName = f.name
   }
 </script>
 
-<main style="font-family: system-ui; max-width: 720px; margin: 2rem auto">
-  <h1>SpliceQL × Svelte</h1>
-  <p>Upload a BAM and run a SpliceQL query entirely in your browser.</p>
-  <input type="file" accept=".bam" on:change={onFile} />
-  <textarea bind:value={query} rows="5" style="width: 100%; margin-top: 8px"></textarea>
-  <button on:click={() => execute({ query, files })} disabled={$loading} style="margin-top: 8px">
-    {$loading ? 'Running…' : 'Run query'}
-  </button>
-  {#if $error}<pre style="color: crimson">{String($error)}</pre>{/if}
-  {#if $result}<pre>{JSON.stringify($result, null, 2)}</pre>{/if}
+<main class="splice">
+  <header>
+    <span class="logo">🧬 SpliceQL</span>
+    <span class="badge">× Svelte · powered by @codonsplice/wasm</span>
+  </header>
+  <p class="tagline">
+    A genomic query engine compiled to WebAssembly. Edit the query — it
+    type-checks and compiles to bytecode live, right here in the browser.
+  </p>
+
+  <textarea class="editor" bind:value={query} rows="6" spellcheck="false"></textarea>
+
+  <div class="grid">
+    <section class="card">
+      <h3>Type check</h3>
+      {#if typeError}<pre class="err">{typeError}</pre>{:else}<p class="ok">✓ valid SpliceQL</p>{/if}
+    </section>
+    <section class="card">
+      <h3>Compiled bytecode</h3>
+      <pre class="code">{bytecode || '—'}</pre>
+    </section>
+  </div>
+
+  <div class="run">
+    <label class="file">
+      {fileName ? `📄 ${fileName}` : 'Choose a BAM…'}
+      <input type="file" accept=".bam" on:change={onFile} hidden />
+    </label>
+    <button on:click={() => execute({ query, files })} disabled={$loading || !!typeError}>
+      {$loading ? 'Running…' : 'Run query ▶'}
+    </button>
+  </div>
+
+  {#if $error}<pre class="err">{String($error)}</pre>{/if}
+  {#if $result}<pre class="code result">{JSON.stringify($result, null, 2)}</pre>{/if}
 </main>
+
+<style>
+  :global(body) { margin: 0; background: #11111b; color: #cdd6f4; font-family: system-ui, sans-serif; }
+  .splice { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  .logo { font-size: 1.6rem; font-weight: 700; color: #cba6f7; }
+  .badge { font-size: .85rem; color: #7f849c; }
+  .tagline { color: #a6adc8; line-height: 1.5; max-width: 60ch; }
+  .editor {
+    width: 100%; box-sizing: border-box; margin-top: .5rem; padding: 1rem;
+    font: 14px/1.5 ui-monospace, monospace; color: #cdd6f4; background: #181825;
+    border: 1px solid #313244; border-radius: 10px; resize: vertical;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+  .card { background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+  .card h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #7f849c; }
+  .ok { color: #a6e3a1; margin: 0; }
+  .err { color: #f38ba8; white-space: pre-wrap; margin: 0; }
+  .code { color: #89dceb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; max-height: 260px; overflow: auto; }
+  .result { margin-top: 1rem; background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+  .run { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+  .file { cursor: pointer; padding: .5rem .9rem; border: 1px dashed #45475a; border-radius: 8px; color: #a6adc8; }
+  button { padding: .55rem 1.1rem; font-weight: 600; color: #11111b; background: #cba6f7; border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+</style>
 "#;
 
 const ASTRO_DEMO: &str = r#"---
-// SpliceQL runs client-side; see the inline module script below.
+// SpliceQL runs client-side; the module script below is bundled by Astro.
+const sample = `FROM bam "sample.bam"
+WHERE chr = "7" AND depth > 30
+CALL variants
+WITH min_af = 0.05
+LIMIT 20`
 ---
 
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SpliceQL × Astro</title>
   </head>
   <body>
-    <main style="font-family: system-ui; max-width: 720px; margin: 2rem auto">
-      <h1>SpliceQL × Astro</h1>
-      <p>Upload a BAM and run a SpliceQL query entirely in your browser.</p>
-      <input id="bam" type="file" accept=".bam" />
-      <textarea id="q" rows="5" style="width: 100%; margin-top: 8px">FROM bam "sample.bam" WHERE chr = "7" CALL variants LIMIT 20</textarea>
-      <button id="run" style="margin-top: 8px">Run query</button>
-      <pre id="out"></pre>
+    <main class="splice">
+      <header>
+        <span class="logo">🧬 SpliceQL</span>
+        <span class="badge">× Astro · powered by @codonsplice/wasm</span>
+      </header>
+      <p class="tagline">
+        A genomic query engine compiled to WebAssembly. Edit the query — it
+        type-checks and compiles to bytecode live, right here in the browser.
+      </p>
+
+      <textarea id="q" class="editor" rows="6" spellcheck="false">{sample}</textarea>
+
+      <div class="grid">
+        <section class="card">
+          <h3>Type check</h3>
+          <pre id="typecheck" class="ok">✓ valid SpliceQL</pre>
+        </section>
+        <section class="card">
+          <h3>Compiled bytecode</h3>
+          <pre id="bytecode" class="code">—</pre>
+        </section>
+      </div>
+
+      <div class="run">
+        <label class="file" id="fileLabel">
+          Choose a BAM…
+          <input id="bam" type="file" accept=".bam" hidden />
+        </label>
+        <button id="run">Run query ▶</button>
+      </div>
+
+      <pre id="out" class="code result"></pre>
     </main>
 
     <script>
-      import { execute } from '@codonsplice/astro'
-      const out = document.getElementById('out')
+      import { execute, compile, check } from '@codonsplice/astro'
+      const $ = (id) => document.getElementById(id)
+      const q = $('q'), typecheck = $('typecheck'), bytecode = $('bytecode')
+      const out = $('out'), runBtn = $('run'), fileLabel = $('fileLabel')
       let files = {}
-      document.getElementById('bam').addEventListener('change', async (e) => {
-        const f = e.target.files[0]
-        if (!f) return
-        files = { [f.name]: new Uint8Array(await f.arrayBuffer()) }
-      })
-      document.getElementById('run').addEventListener('click', async () => {
+
+      async function live() {
         try {
-          out.textContent = JSON.stringify(
-            await execute({ query: document.getElementById('q').value, files }),
-            null,
-            2
-          )
-        } catch (err) {
-          out.textContent = String(err)
+          const err = await check(q.value)
+          typecheck.textContent = err || '✓ valid SpliceQL'
+          typecheck.className = err ? 'err' : 'ok'
+          bytecode.textContent = err ? '—' : await compile(q.value)
+          runBtn.disabled = !!err
+        } catch (e) {
+          typecheck.textContent = String(e); typecheck.className = 'err'; bytecode.textContent = '—'
         }
+      }
+      q.addEventListener('input', live); live()
+
+      $('bam').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; if (!f) return
+        files = { [f.name]: new Uint8Array(await f.arrayBuffer()) }
+        fileLabel.childNodes[0].nodeValue = `📄 ${f.name} `
+      })
+      runBtn.addEventListener('click', async () => {
+        runBtn.disabled = true
+        try { out.textContent = JSON.stringify(await execute({ query: q.value, files }), null, 2) }
+        catch (err) { out.textContent = String(err) }
+        finally { runBtn.disabled = false }
       })
     </script>
+
+    <style is:global>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #11111b; color: #cdd6f4; font-family: system-ui, sans-serif; }
+      .splice { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+      .splice header { display: flex; align-items: baseline; gap: .6rem; }
+      .splice .logo { font-size: 1.6rem; font-weight: 700; color: #cba6f7; }
+      .splice .badge { font-size: .85rem; color: #7f849c; }
+      .splice .tagline { color: #a6adc8; line-height: 1.5; max-width: 60ch; }
+      .splice .editor {
+        width: 100%; box-sizing: border-box; margin-top: .5rem; padding: 1rem;
+        font: 14px/1.5 ui-monospace, monospace; color: #cdd6f4; background: #181825;
+        border: 1px solid #313244; border-radius: 10px; resize: vertical;
+      }
+      .splice .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+      .splice .card { background: #181825; border: 1px solid #313244; border-radius: 10px; padding: 1rem; }
+      .splice .card h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #7f849c; }
+      .splice .ok { color: #a6e3a1; margin: 0; }
+      .splice .err { color: #f38ba8; white-space: pre-wrap; margin: 0; }
+      .splice .code { color: #89dceb; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; max-height: 260px; overflow: auto; }
+      .splice .result { margin-top: 1rem; }
+      .splice .run { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+      .splice .file { cursor: pointer; padding: .5rem .9rem; border: 1px dashed #45475a; border-radius: 8px; color: #a6adc8; }
+      .splice button { padding: .55rem 1.1rem; font-weight: 600; color: #11111b; background: #cba6f7; border: 0; border-radius: 8px; cursor: pointer; }
+      .splice button:disabled { opacity: .5; cursor: not-allowed; }
+    </style>
   </body>
 </html>
 "#;
@@ -373,30 +680,39 @@ mod tests {
     }
 
     #[test]
-    fn injects_dependency_into_existing_deps() {
+    fn injects_dependencies_into_existing_deps() {
         let pkg = r#"{"name":"demo","dependencies":{"react":"^18.0.0"}}"#;
-        let out = inject_dependency(pkg, Framework::React).unwrap();
+        let out = inject_dependencies(pkg, Framework::React).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["dependencies"]["react"], "^18.0.0");
         assert_eq!(v["dependencies"]["@codonsplice/react"], "latest");
+        // The wrapper re-exports the core tooling, so wasm is transitive only.
+        assert!(v["dependencies"]["@codonsplice/wasm"].is_null());
     }
 
     #[test]
-    fn injects_dependency_when_deps_absent() {
+    fn injects_dependencies_when_deps_absent() {
         let pkg = r#"{"name":"demo"}"#;
-        let out = inject_dependency(pkg, Framework::Vue).unwrap();
+        let out = inject_dependencies(pkg, Framework::Astro).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["dependencies"]["@codonsplice/vue"], "latest");
+        assert_eq!(v["dependencies"]["@codonsplice/astro"], "latest");
+        // Astro re-exports the core API, so it doesn't add @codonsplice/wasm.
+        assert!(v["dependencies"]["@codonsplice/wasm"].is_null());
     }
 
     #[test]
     fn example_paths_match_framework() {
-        assert_eq!(example_file(Framework::React).0, "src/App.jsx");
-        assert_eq!(example_file(Framework::Vue).0, "src/App.vue");
-        assert_eq!(example_file(Framework::Svelte).0, "src/App.svelte");
-        assert_eq!(example_file(Framework::Astro).0, "src/pages/index.astro");
-        // Each demo imports its wrapper package.
-        assert!(example_file(Framework::React).1.contains("@codonsplice/react"));
-        assert!(example_file(Framework::Astro).1.contains("@codonsplice/astro"));
+        assert_eq!(example_files(Framework::React)[0].0, "src/App.jsx");
+        assert_eq!(example_files(Framework::Vue)[0].0, "src/App.vue");
+        assert_eq!(example_files(Framework::Svelte)[0].0, "src/App.svelte");
+        assert_eq!(example_files(Framework::Astro)[0].0, "src/pages/index.astro");
+        // React ships a separate stylesheet too.
+        assert!(example_files(Framework::React)
+            .iter()
+            .any(|(p, _)| *p == "src/splice-demo.css"));
+        // Each demo wires up the SpliceQL tooling.
+        assert!(example_files(Framework::React)[0].1.contains("@codonsplice/react"));
+        assert!(example_files(Framework::React)[0].1.contains("compile"));
+        assert!(example_files(Framework::Astro)[0].1.contains("@codonsplice/astro"));
     }
 }

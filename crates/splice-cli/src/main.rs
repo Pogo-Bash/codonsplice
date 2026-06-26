@@ -10,7 +10,6 @@
 mod build;
 mod create;
 mod directive;
-mod installer;
 mod spq;
 mod tui;
 mod update;
@@ -47,8 +46,6 @@ enum Command {
         /// Project directory name (default: splice-app).
         name: Option<String>,
     },
-    /// Launch the guided TUI installer (detect environment + install).
-    Install,
     /// Check for and install the latest release of splice.
     Update,
     /// Remove splice (binary + PATH entries; guides npm/cargo installs).
@@ -96,13 +93,16 @@ fn main() -> std::process::ExitCode {
 
     // Auto-check for updates before normal commands (including the bare TUI):
     // check, prompt y/N if a newer release exists, then proceed to the command.
-    // Skipped only for the update/uninstall/install flows, which manage versions
+    // Skipped only for the update/uninstall flows, which manage versions
     // themselves.
     if !matches!(
         cli.command,
-        Some(Command::Update) | Some(Command::Uninstall) | Some(Command::Install)
+        Some(Command::Update) | Some(Command::Uninstall)
     ) {
-        update::auto_check(cli.no_update);
+        // Verbose (announce the check + result) only for the bare TUI launch, so
+        // the user sees it happen; other commands stay quiet unless an update
+        // is available.
+        update::auto_check(cli.no_update, cli.command.is_none());
     }
 
     match cli.command {
@@ -117,13 +117,6 @@ fn main() -> std::process::ExitCode {
         Some(Command::Compile { source }) => cmd_compile(&source),
         Some(Command::Check { source }) => cmd_check(&source),
         Some(Command::Create { framework, name }) => create::cmd_create(&framework, name),
-        Some(Command::Install) => match installer::run() {
-            Ok(()) => std::process::ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("installer error: {e}");
-                std::process::ExitCode::FAILURE
-            }
-        },
         Some(Command::Update) => update::cmd_update(),
         Some(Command::Uninstall) => update::cmd_uninstall(),
         Some(Command::New { name }) => spq::cmd_new(&name),
