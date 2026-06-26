@@ -15,8 +15,12 @@ const VCF: &str = "\
 ";
 
 fn write_vcf() -> std::path::PathBuf {
+    // Unique per call: the two tests run in parallel and each removes its file,
+    // so a shared `cs_vcf_<pid>.vcf` raced (one deleted the other's mid-read).
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut p = std::env::temp_dir();
-    p.push(format!("cs_vcf_{}.vcf", std::process::id()));
+    p.push(format!("cs_vcf_{}_{}.vcf", std::process::id(), n));
     let mut f = std::fs::File::create(&p).unwrap();
     f.write_all(VCF.as_bytes()).unwrap();
     p
