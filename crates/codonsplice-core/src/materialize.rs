@@ -31,9 +31,12 @@ pub fn materialize(cursor: Arc<Mutex<Cursor>>, _source: &str) -> Result<Vec<Reco
 
     // Resolve the raw record set: either a deferred producer (variant calling,
     // run now with the LIMIT short-circuit) or eagerly-computed records. The
-    // limit hint is only passed when there is no per-record predicate, since a
-    // predicate filters afterwards and an early cap could under-produce.
-    let limit_hint = if guard.predicate.is_none() {
+    // limit hint is only passed when there is neither a per-record predicate nor
+    // an ORDER BY: a predicate filters afterwards (an early cap could
+    // under-produce), and an ORDER BY must see the full set before truncating —
+    // capping the producer first would sort only the first N produced, not the
+    // global top N. See #3.
+    let limit_hint = if guard.predicate.is_none() && guard.order.is_none() {
         guard.limit.filter(|n| *n >= 0).map(|n| n as usize)
     } else {
         None
@@ -68,10 +71,23 @@ pub fn materialize(cursor: Arc<Mutex<Cursor>>, _source: &str) -> Result<Vec<Reco
                 (k, r)
             })
             .collect();
-        keyed.sort_by(|a, b| cmp_values(&a.0, &b.0));
-        if *desc {
-            keyed.reverse();
-        }
+        // Direction-aware comparator (not sort-then-reverse): `reverse()` would
+        // break the stable order of equal-key ties and flip NULLs to the front.
+        // NULLs sort last regardless of direction; only the non-null comparison
+        // is inverted for DESC. See #3.
+        keyed.sort_by(|a, b| match (&a.0, &b.0) {
+            (RuntimeValue::Null, RuntimeValue::Null) => Ordering::Equal,
+            (RuntimeValue::Null, _) => Ordering::Greater,
+            (_, RuntimeValue::Null) => Ordering::Less,
+            _ => {
+                let ord = cmp_values(&a.0, &b.0);
+                if *desc {
+                    ord.reverse()
+                } else {
+                    ord
+                }
+            }
+        });
         rows = keyed.into_iter().map(|(_, r)| r).collect();
     }
 

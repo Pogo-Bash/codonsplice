@@ -1088,25 +1088,27 @@ fn runtime_to_json(v: &RuntimeValue) -> serde_json::Value {
 }
 
 fn records_to_vcf(records: &[Record]) -> String {
-    // A projected `SELECT` produces `Record::Row`s whose columns don't fit the
-    // native variant schema. Emit a custom-FORMAT VCF that preserves every
-    // projected column instead of silently dropping the rows (which would leave
-    // the `wrote N record(s)` count disagreeing with an empty body). See #1.
-    if records.iter().any(|r| matches!(r, Record::Row(_))) {
-        return projected_rows_to_vcf(records);
-    }
-    let mut out = String::from(
-        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
-    );
-    for r in records {
-        if let Record::Variant(v) = r {
-            out.push_str(&format!(
-                "{}\t{}\t.\t{}\t{}\t{:.1}\tPASS\tDP={};AF={:.4}\n",
-                v.chrom, v.pos, v.ref_base, v.alt, v.qual, v.depth, v.allele_freq
-            ));
+    // Native fast path: a homogeneous variant stream renders as a standard VCF.
+    if records.iter().all(|r| matches!(r, Record::Variant(_))) {
+        let mut out = String::from(
+            "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+        );
+        for r in records {
+            if let Record::Variant(v) = r {
+                out.push_str(&format!(
+                    "{}\t{}\t.\t{}\t{}\t{:.1}\tPASS\tDP={};AF={:.4}\n",
+                    v.chrom, v.pos, v.ref_base, v.alt, v.qual, v.depth, v.allele_freq
+                ));
+            }
         }
+        return out;
     }
-    out
+    // Anything else — projected `SELECT` rows, coverage windows (CALL coverage),
+    // alignments (CALL reads), or a mixed batch — is serialized via each record's
+    // natural columns as a custom-FORMAT VCF, so no record kind is silently
+    // dropped while still being counted in `wrote N record(s)`. See #1, #3.
+    let rows: Vec<Record> = records.iter().cloned().map(Record::into_row).collect();
+    projected_rows_to_vcf(&rows)
 }
 
 /// Column names that map to one of the eight fixed VCF fields. Anything else in
@@ -1218,22 +1220,91 @@ fn fmt_field(v: &RuntimeValue) -> String {
 }
 
 fn records_to_bed(records: &[Record]) -> String {
-    let mut out = String::new();
-    for r in records {
-        match r {
-            Record::CoverageWindow(w) => out.push_str(&format!(
-                "{}\t{}\t{}\t{:.4}\n",
-                w.chromosome, w.start, w.end, w.normalized
-            )),
-            Record::Variant(v) => out.push_str(&format!(
-                "{}\t{}\t{}\t{}\n",
-                v.chrom,
-                v.pos - 1,
-                v.pos,
-                v.alt
-            )),
-            _ => {}
+    // Native fast path: a stream of coverage windows / variants.
+    if records
+        .iter()
+        .all(|r| matches!(r, Record::CoverageWindow(_) | Record::Variant(_)))
+    {
+        let mut out = String::new();
+        for r in records {
+            match r {
+                Record::CoverageWindow(w) => out.push_str(&format!(
+                    "{}\t{}\t{}\t{:.4}\n",
+                    w.chromosome, w.start, w.end, w.normalized
+                )),
+                Record::Variant(v) => {
+                    out.push_str(&format!("{}\t{}\t{}\t{}\n", v.chrom, v.pos - 1, v.pos, v.alt))
+                }
+                _ => {}
+            }
         }
+        return out;
+    }
+    // Projected `SELECT` rows, alignments (CALL reads), or a mixed batch: derive
+    // chrom/start/end from each record's natural columns instead of silently
+    // dropping them. See #1, #3.
+    let rows: Vec<Record> = records.iter().cloned().map(Record::into_row).collect();
+    projected_rows_to_bed(&rows)
+}
+
+/// Column names consumed to build the three fixed BED fields. Anything else in a
+/// projected row is appended as an extra (named in the `#` comment header).
+fn bed_consumed(col: &str) -> bool {
+    matches!(col, "chrom" | "chr" | "start" | "end" | "pos")
+}
+
+/// Serialize projected rows as BED: `chrom`/`chr` → col 1, `start` (or `pos`-1,
+/// 0-based) → col 2, `end` (or `pos`) → col 3, and every remaining projected
+/// column appended as an extra field. A leading `#` comment names the columns.
+fn projected_rows_to_bed(records: &[Record]) -> String {
+    let columns: Vec<String> = records
+        .iter()
+        .find_map(|r| match r {
+            Record::Row(cols) => Some(cols.iter().map(|(k, _)| k.clone()).collect()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let extra: Vec<String> = columns.into_iter().filter(|c| !bed_consumed(c)).collect();
+
+    let mut out = String::from("#chrom\tstart\tend");
+    for c in &extra {
+        out.push('\t');
+        out.push_str(c);
+    }
+    out.push('\n');
+
+    for r in records {
+        let cols = match r {
+            Record::Row(cols) => cols,
+            _ => continue,
+        };
+        let get = |names: &[&str]| -> Option<&RuntimeValue> {
+            names
+                .iter()
+                .find_map(|n| cols.iter().find(|(k, _)| k == n).map(|(_, v)| v))
+        };
+        let chrom = get(&["chrom", "chr"]).map(fmt_field).unwrap_or_else(|| ".".to_string());
+        // BED is 0-based half-open: derive [pos-1, pos) when only `pos` is present.
+        let (start, end) = match (get(&["start"]), get(&["end"])) {
+            (Some(s), Some(e)) => (fmt_field(s), fmt_field(e)),
+            (Some(s), None) => (fmt_field(s), ".".to_string()),
+            (None, Some(e)) => (".".to_string(), fmt_field(e)),
+            (None, None) => match get(&["pos"]).and_then(as_i64) {
+                Some(p) => ((p - 1).to_string(), p.to_string()),
+                None => (".".to_string(), ".".to_string()),
+            },
+        };
+        out.push_str(&format!("{chrom}\t{start}\t{end}"));
+        for c in &extra {
+            let v = cols
+                .iter()
+                .find(|(k, _)| k == c)
+                .map(|(_, v)| fmt_field(v))
+                .unwrap_or_else(|| ".".to_string());
+            out.push('\t');
+            out.push_str(&v);
+        }
+        out.push('\n');
     }
     out
 }
