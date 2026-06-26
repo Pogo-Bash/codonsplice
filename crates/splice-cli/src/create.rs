@@ -621,7 +621,7 @@ import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { tags as t } from '@lezer/highlight'
 
 const KEYWORDS = ['FROM', 'SELECT', 'WHERE', 'AND', 'OR', 'NOT', 'CALL', 'WITH', 'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'INTO', 'AS']
-const FORMATS = ['bam', 'vcf', 'bed', 'fasta', 'cram']
+const FORMATS = ['bam', 'vcf', 'bed', 'fasta', 'cram', 'json', 'tsv']
 const OPS = ['variants', 'cnv', 'coverage', 'reads', 'header']
 const PARAMS = ['min_af', 'min_allele_freq', 'min_depth', 'min_base_quality', 'min_mapping_quality', 'min_variant_reads', 'min_strand_bias', 'window_size', 'amp_threshold', 'del_threshold', 'min_windows', 'segmentation_method']
 const FIELDS = ['chr', 'chrom', 'pos', 'ref', 'alt', 'qual', 'depth', 'ref_count', 'alt_count', 'af', 'allele_freq', 'strand_bias', 'kind', 'filter', 'id', 'mapq', 'flag', 'strand', 'start', 'end', 'coverage', 'normalized']
