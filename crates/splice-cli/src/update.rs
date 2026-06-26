@@ -201,16 +201,31 @@ fn install_version(version: &str) -> io::Result<PathBuf> {
 
 /// Best-effort update check run before normal commands. Never aborts the
 /// command on failure; only prompts to install when a newer release is found.
-pub fn auto_check(no_update: bool) {
+///
+/// When `verbose` (the bare-TUI launch), it announces the check and the
+/// up-to-date / offline result so the user sees it happen; non-verbose callers
+/// (every other command) stay quiet unless an update is actually available.
+pub fn auto_check(no_update: bool, verbose: bool) {
     if no_update || std::env::var_os("SPLICE_NO_UPDATE").is_some() {
         return;
     }
     let cur = current_version();
+    if verbose {
+        eprintln!("splice {cur}: checking for updates…");
+    }
     let latest = match fetch_latest_version() {
         Some(v) => v,
-        None => return, // offline / rate-limited — stay quiet
+        None => {
+            if verbose {
+                eprintln!("  could not reach the release server (offline) — continuing.");
+            }
+            return; // offline / rate-limited
+        }
     };
     if !is_newer(&latest, cur) {
+        if verbose {
+            eprintln!("✓ up to date ({cur})");
+        }
         return;
     }
 
