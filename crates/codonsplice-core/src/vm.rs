@@ -1088,6 +1088,13 @@ fn runtime_to_json(v: &RuntimeValue) -> serde_json::Value {
 }
 
 fn records_to_vcf(records: &[Record]) -> String {
+    // A projected `SELECT` produces `Record::Row`s whose columns don't fit the
+    // native variant schema. Emit a custom-FORMAT VCF that preserves every
+    // projected column instead of silently dropping the rows (which would leave
+    // the `wrote N record(s)` count disagreeing with an empty body). See #1.
+    if records.iter().any(|r| matches!(r, Record::Row(_))) {
+        return projected_rows_to_vcf(records);
+    }
     let mut out = String::from(
         "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
     );
@@ -1100,6 +1107,114 @@ fn records_to_vcf(records: &[Record]) -> String {
         }
     }
     out
+}
+
+/// Column names that map to one of the eight fixed VCF fields. Anything else in
+/// a projected row is carried in `INFO` as a declared `KEY=value` pair.
+fn vcf_canonical(col: &str) -> bool {
+    matches!(
+        col,
+        "chrom" | "chr" | "pos" | "id" | "ref" | "ref_base" | "alt" | "qual" | "filter"
+    )
+}
+
+/// Serialize projected `SELECT` rows (`Record::Row`) as a custom-FORMAT VCF:
+/// canonical columns fill the eight fixed VCF fields, every other projected
+/// column is declared with an `##INFO` line and packed into `INFO`. Lossless for
+/// arbitrary projections, so the body row count matches the `wrote N` summary.
+fn projected_rows_to_vcf(records: &[Record]) -> String {
+    // Column order comes from the first projected row; rows missing a column
+    // emit "." for it.
+    let columns: Vec<String> = records
+        .iter()
+        .find_map(|r| match r {
+            Record::Row(cols) => Some(cols.iter().map(|(k, _)| k.clone()).collect()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let info_cols: Vec<String> = columns.into_iter().filter(|c| !vcf_canonical(c)).collect();
+
+    let mut out = String::from("##fileformat=VCFv4.2\n");
+    out.push_str("##source=SpliceQL projected SELECT\n");
+    for col in &info_cols {
+        out.push_str(&format!(
+            "##INFO=<ID={col},Number=1,Type={},Description=\"SpliceQL projected column\">\n",
+            info_type(records, col)
+        ));
+    }
+    out.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
+
+    for r in records {
+        let cols = match r {
+            Record::Row(cols) => cols,
+            _ => continue,
+        };
+        let field = |names: &[&str], default: &str| -> String {
+            names
+                .iter()
+                .find_map(|n| cols.iter().find(|(k, _)| k == n).map(|(_, v)| fmt_field(v)))
+                .unwrap_or_else(|| default.to_string())
+        };
+        let info = if info_cols.is_empty() {
+            ".".to_string()
+        } else {
+            info_cols
+                .iter()
+                .map(|c| {
+                    let v = cols.iter().find(|(k, _)| k == c).map(|(_, v)| fmt_field(v));
+                    format!("{c}={}", v.unwrap_or_else(|| ".".to_string()))
+                })
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{info}\n",
+            field(&["chrom", "chr"], "."),
+            field(&["pos"], "."),
+            field(&["id"], "."),
+            field(&["ref", "ref_base"], "."),
+            field(&["alt"], "."),
+            field(&["qual"], "."),
+            field(&["filter"], "PASS"),
+        ));
+    }
+    out
+}
+
+/// Infer the VCF `INFO` Type for a projected column from the first row that
+/// carries a non-null value (defaults to `String`).
+fn info_type(records: &[Record], col: &str) -> &'static str {
+    for r in records {
+        if let Record::Row(cols) = r {
+            if let Some((_, v)) = cols.iter().find(|(k, _)| k == col) {
+                match v {
+                    RuntimeValue::Int(_) => return "Integer",
+                    RuntimeValue::Float(_) => return "Float",
+                    RuntimeValue::Str(_) | RuntimeValue::Bool(_) => return "String",
+                    _ => continue,
+                }
+            }
+        }
+    }
+    "String"
+}
+
+/// Format a projected scalar for a VCF field. `Null`/non-scalar → ".".
+fn fmt_field(v: &RuntimeValue) -> String {
+    match v {
+        RuntimeValue::Int(n) => n.to_string(),
+        RuntimeValue::Float(x) => {
+            if x.is_finite() && *x == x.trunc() {
+                format!("{x:.1}")
+            } else {
+                let s = format!("{x:.4}");
+                s.trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        }
+        RuntimeValue::Str(s) => s.to_string(),
+        RuntimeValue::Bool(b) => b.to_string(),
+        _ => ".".to_string(),
+    }
 }
 
 fn records_to_bed(records: &[Record]) -> String {
