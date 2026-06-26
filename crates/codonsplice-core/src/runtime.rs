@@ -112,6 +112,8 @@ fn fmt_format(f: &Format) -> &'static str {
         Format::Fasta => "fasta",
         Format::Bed => "bed",
         Format::Cram => "cram",
+        Format::Json => "json",
+        Format::Tsv => "tsv",
     }
 }
 

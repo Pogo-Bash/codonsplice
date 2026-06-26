@@ -133,3 +133,75 @@ fn order_by_limit_is_global_top_n() {
     // And it's the *global* top 5, not the first-5-produced.
     assert_eq!(limited, expected, "LIMIT after ORDER BY must be the global top-N");
 }
+
+// ── INTO json (NDJSON) and INTO tsv sinks ───────────────────────────────────
+
+#[test]
+fn into_json_is_ndjson_with_variant_fields() {
+    let (count, json) = run_into("json_var", "json", r#"WHERE chr = "7" CALL variants LIMIT 5"#);
+    let lines: Vec<&str> = json.lines().collect();
+    assert_eq!(lines.len(), count, "NDJSON must have exactly one line per record");
+    for line in &lines {
+        let obj: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(line).expect("each NDJSON line is a valid JSON object");
+        assert_eq!(obj["chrom"], serde_json::json!("7"));
+        assert!(obj["pos"].is_number());
+        assert!(obj["ref"].is_string() && obj["alt"].is_string());
+        assert!(obj["depth"].is_number());
+        assert!(obj["allele_freq"].is_number());
+    }
+}
+
+#[test]
+fn into_json_projected_rows_use_alias_keys() {
+    let (count, json) = run_into(
+        "json_proj",
+        "json",
+        r#"WHERE chr = "7" CALL variants LIMIT 3 SELECT chrom, pos, gc(ref) AS gc_ref"#,
+    );
+    let lines: Vec<&str> = json.lines().collect();
+    assert_eq!(lines.len(), count);
+    for line in &lines {
+        let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).unwrap();
+        // Projected rows expose exactly the SELECT columns by their alias names,
+        // in SELECT order (preserve_order).
+        let keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["chrom", "pos", "gc_ref"]);
+        assert!(obj["gc_ref"].is_number());
+    }
+}
+
+#[test]
+fn into_tsv_has_header_and_one_row_per_record() {
+    let (count, tsv) = run_into("tsv_var", "tsv", r#"WHERE chr = "7" CALL variants LIMIT 5"#);
+    let lines: Vec<&str> = tsv.lines().collect();
+    assert_eq!(lines.len(), count + 1, "header row + one row per record");
+    let header: Vec<&str> = lines[0].split('\t').collect();
+    for col in ["chrom", "pos", "ref", "alt", "depth", "allele_freq"] {
+        assert!(header.contains(&col), "TSV header missing {col}: {header:?}");
+    }
+    // Every data row is tab-aligned to the header width.
+    for row in &lines[1..] {
+        assert_eq!(row.split('\t').count(), header.len());
+    }
+}
+
+#[test]
+fn into_tsv_projected_header_matches_select_order() {
+    let (count, tsv) = run_into(
+        "tsv_proj",
+        "tsv",
+        r#"WHERE chr = "7" CALL variants LIMIT 3 SELECT chrom, pos, gc(ref) AS gc_ref"#,
+    );
+    let lines: Vec<&str> = tsv.lines().collect();
+    assert_eq!(lines.len(), count + 1);
+    assert_eq!(lines[0], "chrom\tpos\tgc_ref", "header is the SELECT columns in order");
+}
+
+#[test]
+fn into_vcf_unchanged_regression() {
+    let (count, vcf) = run_into("vcf_reg", "vcf", r#"WHERE chr = "7" CALL variants LIMIT 3"#);
+    assert!(vcf.starts_with("##fileformat=VCFv4.2"), "VCF header preserved");
+    assert!(vcf.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"));
+    assert_eq!(data_rows(&vcf).len(), count, "VCF body row count == reported count");
+}
