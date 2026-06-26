@@ -1,6 +1,6 @@
 [package]
 name = "splice-cli"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "CodonSplice CLI + TUI — the `splice` binary"
 license = "MIT"
