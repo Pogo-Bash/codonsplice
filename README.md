@@ -1,79 +1,98 @@
 # CodonSplice
 
-CodonSplice is the **engine** half of a two-crate genomic query system:
+**A small, SQL-like query language for genomic files — compiled to bytecode and
+run on a stack VM.** Write [SpliceQL](https://github.com/Pogo-Bash/spliceql),
+point it at a BAM/VCF, and get variants, coverage, or reads back.
 
-```text
-spliceql (language)        →  codonsplice-core (engine)
-Lexer → Parser → AST       →  Compiler → Bytecode → VM
+```sql
+FROM bam "tumor.bam"
+WHERE chr = "7" AND pos >= 55000000 AND pos <= 55300000 AND depth > 30
+CALL variants
+WITH min_af = 0.05, min_base_quality = 20
+INTO vcf "egfr.vcf"
 ```
-
-You write [SpliceQL](https://github.com/Pogo-Bash/spliceql) — a small, SQL-like
-query language for genomic files — and CodonSplice compiles it to a compact
-stack-machine bytecode and runs it. Phase 3 (this milestone) implements the
-**bytecode compiler**, a **VM** that fully evaluates expressions, the
-**disassembler**, and the `splice` **CLI + TUI**. Pipeline opcodes that touch
-real genomic data (`OPEN_SOURCE … WRITE_INTO`, `CALL_*`) compile and disassemble
-today and stub out at runtime with `VmError::NotYetImplemented` — the
-[cnvlens-core bridge that lights them up is Phase 4](docs/PHASE4_DESIGN.md).
-
-## Workspace layout
-
-```text
-codonsplice/
-├── Cargo.toml                 workspace root
-├── crates/
-│   ├── spliceql/              → symlink to ../../spliceql (path dep, read-only)
-│   ├── codonsplice-core/      bytecode compiler + VM + (Phase 4) cnvlens bridge
-│   └── splice-cli/            the `splice` binary: CLI + ratatui TUI
-├── docs/
-│   ├── PHASE4_DESIGN.md       cnvlens-core integration design
-│   └── NPM_PACKAGE.md         WASM/npm package + framework integration design
-└── README.md
-```
-
-`spliceql` is referenced through the `crates/spliceql` symlink and is
-**excluded** as a workspace member (it has its own fuzz sub-crate and lockfile);
-it is consumed purely as a path dependency. No spliceql source is modified by
-this crate — all engine work is additive.
-
-## Build & test
 
 ```sh
-cargo test --workspace      # 27 compiler/VM/disassembler tests
-cargo clippy --workspace    # clean
-cargo run -p splice-cli     # launch the TUI
+$ splice run egfr.spq --bam tumor.bam --output egfr.vcf
+wrote 274 record(s) to egfr.vcf (vcf)
 ```
 
-## The `splice` CLI
+CodonSplice is the **engine**; SpliceQL is the **language**. The two are
+developed as separate crates with a hard boundary:
 
 ```text
-splice                        launch the interactive TUI
-splice query   "FROM bam ..."  compile + run (pipeline ops stub until Phase 4)
-splice compile "FROM bam ..."  compile + print disassembled bytecode
-splice check   "FROM bam ..."  parse + type-check only, no execution
+spliceql  (language)        →   codonsplice  (engine)
+Lexer → Parser → AST        →   Compiler → Bytecode → VM → cnvlens-core
 ```
 
-Example:
+`spliceql` turns source into an AST. `codonsplice-core` compiles that AST to a
+compact stack-machine bytecode and executes it against real genomic data via
+[`cnvlens-core`](https://github.com/Pogo-Bash/cnvlens). The `splice` binary wraps
+both in a CLI + TUI.
+
+---
+
+## Install
 
 ```sh
-$ splice compile 'FROM bam "x.bam" WHERE depth > 30 CALL variants WITH min_allele_freq = 0.05'
-0000  OPEN_SOURCE  bam "x.bam"
-0004  SCAN
-0005  FILTER       pred@0012 len=8
-000A  LOAD_CONST   0.05
-000D  SET_PARAM    "min_allele_freq"
-0010  CALL_VARIANTS
-0011  HALT
+# Guided installer (Linux / macOS) — downloads the right prebuilt binary
+curl -fsSL https://github.com/Pogo-Bash/codonsplice/releases/latest/download/install.sh | sh
 
-; predicate @ 0012 (len 8)
-0012  LOAD_FIELD   "depth"
-0015  LOAD_CONST   30
-0018  GT
-0019  RET_PRED
+# npm (cross-platform; pulls the matching platform binary)
+npm install -g @codonsplice/cli
+
+# cargo (build from source)
+cargo install --git https://github.com/Pogo-Bash/codonsplice splice-cli
+
+# Windows (winget)
+winget install Pogo-Bash.CodonSplice
 ```
 
-A compile error renders with `query:line:col`, a caret, and a "did you mean"
-hint (Levenshtein + shared-token ranking over the known parameter names):
+`splice update` self-updates to the latest release; `splice uninstall` removes
+it. Current release: **v0.1.4**.
+
+---
+
+## The language
+
+A query is a `FROM` clause followed by any of the optional clauses below, in any
+order (`FROM` must be first):
+
+| Clause | Purpose | Example |
+| --- | --- | --- |
+| `FROM <fmt> <path>` | the input source (required) | `FROM bam "x.bam"` |
+| `SELECT <expr> [AS name], …` | project columns (omit for whole records) | `SELECT chr, pos, depth * af AS alt_reads` |
+| `WHERE <expr>` | per-record predicate | `WHERE chr = "7" AND depth > 30` |
+| `CALL <op>` | the genomic operation to run | `CALL variants` |
+| `WITH <key> = <val>, …` | tune the `CALL` | `WITH min_af = 0.05` |
+| `ORDER BY <expr> [ASC\|DESC], …` | sort the results | `ORDER BY depth DESC` |
+| `LIMIT <n>` | cap the row count | `LIMIT 100` |
+| `INTO <fmt> <path>` | write results to a file | `INTO vcf "out.vcf"` |
+
+### Sources & sinks
+
+| Format | `FROM` (input) | `INTO` (output) |
+| --- | --- | --- |
+| `bam` | ✅ (with `.bai` region seek) | — |
+| `vcf` | ✅ | ✅ (native, or custom-FORMAT for projections) |
+| `bed` | ✅ | ✅ |
+| `fasta` | ✅ | ✅ — repurposed as the **JSON** sink (no `json` token yet) |
+| `cram` | planned (Phase 6) | — |
+
+`FROM bam` with a `WHERE chr = … AND pos >= … AND pos <= …` is recognized at
+compile time and turned into a BAI-indexed region seek instead of a full scan.
+
+### Operations (`CALL`) and their `WITH` parameters
+
+| Operation | Parameters |
+| --- | --- |
+| `variants` | `min_depth`, `min_base_quality`, `min_mapping_quality`, `min_variant_reads`, `min_allele_freq` (alias `min_af`), `min_strand_bias` |
+| `cnv` / `coverage` | `window_size`, `amp_threshold`, `del_threshold`, `min_windows`, `segmentation_method` |
+| `reads` | *(none)* |
+| `header` | *(none)* |
+
+An unknown parameter is a compile error with a "did you mean" hint (Levenshtein +
+shared-token ranking over the known names):
 
 ```sh
 $ splice check 'FROM bam "x.bam" CALL variants WITH min_freq = 0.05'
@@ -84,13 +103,97 @@ error[E001]: unknown parameter "min_freq"
    |                                                ^^^^ did you mean "min_allele_freq"?
 ```
 
-> The caret points at the parameter **value** rather than the key: the spliceql
-> AST stores `WITH` keys as bare `String`s with no `Span`, and spliceql is
-> read-only, so the value's span is the closest anchor available.
+### Fields (usable in `WHERE` / `SELECT` / `ORDER BY`)
 
-## The TUI
+- **variants**: `chr`/`chrom`, `pos`, `ref`, `alt`, `qual`, `depth`, `ref_count`,
+  `alt_count`, `af`/`allele_freq`, `strand_bias`, `kind`, `filter`, `id`
+- **reads**: `chr`/`chrom`, `pos`, `mapq`, `flag`, `depth`, `strand`,
+  `is_reverse`, `is_duplicate`, `is_secondary`
+- **coverage windows**: `chrom`, `start`, `end`, `coverage`, `normalized`
 
-Launching `splice` with no subcommand opens a three-pane educational TUI:
+### Expressions
+
+Arithmetic (`+ - * /`), comparison (`= != < > <= >=`), boolean
+(`AND` / `OR` with short-circuit jumps, `NOT`), grouping with parentheses,
+dotted field access (`reads.depth`), string subscript (`info["DP"]`), and the
+`*` wildcard. Function calls parse and compile (`abs(af - 0.5)`) but
+see [Known limitations](#known-limitations).
+
+---
+
+## `.spq` scripts
+
+A `.spq` file is a reusable, parameterized query with a typed CLI interface
+declared in `--` directives:
+
+```sql
+#!/usr/bin/env splice
+-- @name: egfr-variant-caller
+-- @version: 1.0.0
+-- @description: Call variants in the EGFR gene region
+-- @input: bam required "Input BAM file"
+-- @input: min_af optional float 0.05 "Minimum allele frequency"
+-- @output: vcf "Variant calls"
+
+FROM bam $bam
+WHERE chr = "7" AND pos >= 55000000 AND pos <= 55300000 AND depth > 30
+CALL variants
+WITH min_af = $min_af, min_depth = 10
+INTO vcf $output
+```
+
+`$name` template variables are bound from `--flag value` arguments at run time:
+
+```sh
+splice new caller                                 # scaffold caller.spq
+splice run caller.spq --bam tumor.bam --output out.vcf --min-af 0.03
+splice build caller.spq --release                 # → self-contained ./caller binary
+./caller --bam tumor.bam --output out.vcf         # same flags as `run`
+```
+
+`splice build` produces a ~22 MB self-contained native binary (or `--wasm` for a
+`.wasm` module). Flags: `-o <name>`, `--release`, `--target <triple>`,
+`--wasm`, `--emit-bc` (also write the `.spq.bc` bytecode).
+
+---
+
+## The CLI
+
+```text
+splice                          launch the interactive TUI
+splice query   "FROM bam …"     compile + run a one-liner
+splice compile "FROM bam …"     compile + print disassembled bytecode
+splice check   "FROM bam …"     parse + type-check only, no execution
+splice new     <name>           scaffold <name>.spq
+splice run     <file.spq> …     run a script, binding $vars from --flag value
+splice build   <file.spq> …     compile a script to a native binary or .wasm
+splice install | update | uninstall    manage the installation
+```
+
+`splice compile` shows exactly what the VM runs — pipeline opcodes inline, with
+per-record sub-programs (the `WHERE` predicate, `SELECT` items, `ORDER BY` keys)
+appended after `HALT`:
+
+```sh
+$ splice compile 'FROM bam "x.bam" WHERE depth > 30 CALL variants WITH min_af = 0.05'
+0000  OPEN_SOURCE  bam "x.bam"
+0004  SCAN
+0005  FILTER       pred@0012 len=8
+000A  LOAD_CONST   0.05
+000D  SET_PARAM    "min_af"
+0010  CALL_VARIANTS
+0011  HALT
+
+; predicate @ 0012 (len 8)
+0012  LOAD_FIELD   "depth"
+0015  LOAD_CONST   30
+0018  GT
+0019  RET_PRED
+```
+
+### The TUI
+
+Launching `splice` with no subcommand opens a three-pane educational editor:
 
 ```text
 ┌─────────────────────────────────────────────────┐
@@ -101,143 +204,107 @@ Launching `splice` with no subcommand opens a three-pane educational TUI:
 │  WHERE depth > 30    │  errors render here      │
 │  CALL variants       │                          │
 ├──────────────────────┴──────────────────────────┤
-│  ARCHITECTURE  (always visible)                  │
 │  spliceql (language)  →  codonsplice (engine)    │
-│  Lexer→Parser→AST     →  Compiler→Bytecode→VM    │
 └─────────────────────────────────────────────────┘
 ```
 
 | Key | Action |
 | --- | --- |
 | `Ctrl+Enter` / `F5` | compile + run the current query |
-| `Ctrl+D` | disassemble bytecode (opcodes cyan, operands yellow, addresses dim, comments gray) |
+| `Ctrl+D` | disassemble bytecode |
 | `Ctrl+A` | pretty-print the parsed AST |
 | `Tab` | switch focus between editor and output |
-| `F1` | toggle the keybindings help overlay |
+| `F1` | toggle the keybindings help |
 | `Ctrl+Q` | quit |
-
-The **ARCHITECTURE** panel is always on screen so the two-crate boundary —
-`spliceql` is the language, `codonsplice-core` is the engine — is explicit to
-anyone using the tool.
 
 ---
 
-## Deliverable A — `codonsplice-core` public API
+## Browser / npm
 
-### Top-level functions (`lib.rs`)
+CodonSplice compiles to WebAssembly and runs entirely client-side — no server,
+no genomic data leaving the browser:
 
-```rust
-/// Parse + compile `source` into a Program.
-pub fn compile(source: &str) -> Result<Program, CompileError>;
+```js
+import { execute } from "@codonsplice/wasm";
 
-/// compile() then disassemble() — the TUI's bytecode view.
-pub fn compile_and_disassemble(source: &str) -> Result<String, CompileError>;
-
-/// compile() + Vm::new + Vm::run. Pipeline opcodes stub out as
-/// VmError::NotYetImplemented until Phase 4.
-pub fn execute(source: &str) -> Result<VmOutput, VmError>;
-
-/// Compile a standalone expression (wrapped as a WHERE predicate) into an
-/// expression-only Program ending in HALT, relocated to offset 0.
-pub fn compile_expr(expr_source: &str) -> Result<Program, CompileError>;
-
-/// Evaluate a constant expression to a RuntimeValue (compile_expr + eval).
-pub fn eval_expr(expr_source: &str) -> Result<RuntimeValue, EvalError>;
-
-pub enum EvalError { Compile(CompileError), Vm(VmError) }
+const result = execute(
+  'FROM bam "sample.bam" WHERE chr = "7" CALL variants',
+  { "sample.bam": bamBytes },   // file name → Uint8Array
+  { /* $vars */ }
+);
 ```
 
-### Compiler module (`pub use compiler::*`)
+Framework wrappers thread the same API through idiomatic hooks/components:
+`@codonsplice/react`, `@codonsplice/vue`, `@codonsplice/svelte`,
+`@codonsplice/astro`. See [docs/NPM_PACKAGE.md](docs/NPM_PACKAGE.md).
 
-```rust
-pub struct Program { pub consts: Vec<Value>, pub code: Vec<u8>, pub debug: Vec<DebugInfo> }
-impl Program { pub fn span_at(&self, offset: usize) -> Option<Span>; }
+---
 
-pub struct DebugInfo { pub code_offset: usize, pub span: Span }
+## Workspace layout
 
-pub enum Value { Int(i64), Float(f64), Str(Rc<str>), Bool(bool), Null }
-impl Value { pub fn type_name(&self) -> &'static str; }
-
-pub struct Compiler { /* consts, code, debug, source */ }
-impl Compiler {
-    pub fn new(source: impl Into<String>) -> Self;
-    pub fn compile(self, query: &Query) -> Result<Program, CompileError>;
-    pub fn compile_expr_program(self, expr: &Expr) -> Program;
-}
-
-pub enum OpCode { /* full instruction set */ }
-impl OpCode {
-    pub fn byte(self) -> u8;
-    pub fn from_byte(b: u8) -> Option<OpCode>;
-    pub fn operand_len(self) -> usize;
-    pub fn name(self) -> &'static str;
-}
-
-pub enum CompileError {
-    UnknownParam      { key: String, span: Span },
-    ParamTypeMismatch { key: String, expected: &'static str, got: &'static str, span: Span },
-    NonConstantParam  { span: Span },
-    ParamWithoutCall  { span: Span },
-    MultipleFrom      { span: Span },
-    ParseError(ParseError),
-}
-impl CompileError {
-    pub fn code(&self) -> &'static str;          // E000..E005
-    pub fn span(&self) -> Span;
-    pub fn message(&self) -> String;
-    pub fn render(&self, source: &str, suggestion: Option<&str>) -> String;
-}
-impl From<ParseError> for CompileError;
-impl Display for CompileError;                    // one-line form
-
-pub fn disassemble(program: &Program) -> String;
-
-// "did you mean" helpers (snake_case-aware ranking)
-pub fn did_you_mean(unknown: &str, candidates: &[&str]) -> Option<String>;
-pub fn suggest_param(unknown: &str, operation: &str) -> Option<String>;
-pub fn param_names_for(operation: &str) -> Vec<&'static str>;
-pub fn levenshtein(a: &str, b: &str) -> usize;
+```text
+codonsplice/
+├── crates/
+│   ├── spliceql/           the language: lexer + parser + AST  (submodule, read-only path dep)
+│   ├── codonsplice-core/   compiler + bytecode + VM + execution + materialization
+│   ├── splice-cli/         the `splice` binary: CLI + ratatui TUI + .spq + installer
+│   ├── codonsplice-wasm/   wasm32 bindings (wasm-bindgen cdylib)
+│   └── spliceql-grammar/   TextMate grammar + Linguist assets + VS Code manifest
+├── cnvlens/                cnvlens-core: BAM/VCF readers, pileup, variant/coverage callers (submodule)
+├── pkg/                    built WASM + npm packages (@codonsplice/*)
+├── scripts/                install.sh, build-wasm.sh, build-cli-packages.sh
+├── templates/              `splice build` Cargo project template
+└── docs/                   per-phase API + design docs
 ```
 
-### VM module (`pub use vm::*`)
+`spliceql` and `cnvlens` are git submodules — clone with
+`git clone --recursive`, or run `git submodule update --init --recursive`.
 
-```rust
-pub struct Vm { /* program, stack, pc */ }
-impl Vm {
-    pub fn new(program: Program) -> Self;
-    pub fn run(&mut self) -> Result<VmOutput, VmError>;       // main program
-    pub fn eval_expr(&mut self) -> Result<RuntimeValue, VmError>; // expr-only program
-}
+### Build & test
 
-pub enum RuntimeValue {
-    Int(i64), Float(f64), Str(Rc<str>), Bool(bool), Null,
-    Pending,   // placeholder for Phase 4 Dataset/Cursor/Record handles
-}
-impl RuntimeValue { pub fn type_name(&self) -> &'static str; }
-
-pub enum VmOutput { Ready(Program), Text(String) }
-
-pub enum VmError {
-    UnknownOpcode(u8, usize),
-    StackUnderflow(usize),
-    TypeMismatch { expected: &'static str, got: &'static str, pc: usize },
-    NotYetImplemented(String),   // pipeline / CALL ops, until Phase 4
-}
+```sh
+cargo test  --workspace          # compiler / VM / disassembler / execution tests
+cargo clippy --workspace
+cargo run   -p splice-cli        # launch the TUI
+bash scripts/build-wasm.sh       # build the WASM npm package
 ```
+
+---
+
+## How it runs (engine internals)
+
+`codonsplice-core` is three layers — see [docs/PHASE4_API.md](docs/PHASE4_API.md)
+and [docs/PHASE5_API.md](docs/PHASE5_API.md) for the full as-built API.
+
+1. **Compile** (`compile`) — AST → `Program { consts, code, debug, region }`.
+   `extract_region` statically lifts a `chr/pos` `WHERE` into a `Region` for BAI
+   seeking.
+2. **Execute** (`Vm::run`) — a stack machine walks the bytecode: `OPEN_SOURCE`
+   builds a `Dataset`, `SCAN` wraps a `Cursor`, `FILTER`/`SET_PARAM`/`CALL_*`
+   configure it, and `materialize` applies the `WHERE` predicate, `SELECT`
+   projection, `ORDER BY` sort, and `LIMIT` to produce the record stream.
+3. **Serialize** (`WRITE_INTO`) — records → VCF / BED / JSON bytes via the `Io`
+   trait (filesystem natively; an in-memory map in WASM).
 
 ### Bytecode instruction set
 
 | Range | Opcodes |
 | --- | --- |
-| `0x01–0x07` | `LOAD_CONST(u16)` `LOAD_TRUE` `LOAD_FALSE` `LOAD_FIELD(u16)` `GET_FIELD(u16)` `INDEX` `LOAD_WILDCARD` |
-| `0x10–0x21` | `NEG` `NOT` `ADD` `SUB` `MUL` `DIV` `EQ` `NE` `LT` `GT` `LE` `GE` `AND(u16 jmp)` `OR(u16 jmp)` `CALL_FN(u16,u8)` `RET_PRED` `JUMP_IF_FALSE(u16)` `JUMP(u16)` |
-| `0x40–0x4F` | `OPEN_SOURCE(u8,u16)` `SCAN` `FILTER(u16,u16)` `PROJECT(u16)` `SET_PARAM(u16)` `ORDER_BY(u16)` `LIMIT` `WRITE_INTO(u8,u16)` `HALT` |
+| `0x01–0x08` | `LOAD_CONST` `LOAD_TRUE` `LOAD_FALSE` `LOAD_FIELD` `GET_FIELD` `INDEX` `LOAD_WILDCARD` `LOAD_VAR` |
+| `0x10–0x21` | `NEG` `NOT` `ADD` `SUB` `MUL` `DIV` `EQ` `NE` `LT` `GT` `LE` `GE` `AND` `OR` `CALL_FN` `RET_PRED` `JUMP_IF_FALSE` `JUMP` |
+| `0x40–0x4F` | `OPEN_SOURCE` `SCAN` `FILTER` `PROJECT` `SET_PARAM` `ORDER_BY` `LIMIT` `WRITE_INTO` `HALT` |
 | `0x50–0x54` | `CALL_VARIANTS` `CALL_CNV` `CALL_COVERAGE` `CALL_READS` `CALL_HEADER` |
 
-Per-record sub-programs (the `WHERE` predicate, `SELECT` items, `ORDER BY` keys)
-are appended **after** `HALT`; the referencing opcode carries the absolute byte
-offset (and, for `FILTER`, the length). Jumps inside a sub-program are encoded
-relative to that sub-program's start.
+A `Program` serializes to a compact `.spq.bc` (`Program::to_bytes` /
+`from_bytes`) — the format compiled binaries embed.
+
+---
+
+## Editor support
+
+`crates/spliceql-grammar` ships a TextMate grammar (scope `source.spq`), a VS
+Code manifest, and GitHub Linguist assets so `.spq` files highlight on GitHub and
+in editors.
 
 ---
 
@@ -245,8 +312,26 @@ relative to that sub-program's start.
 
 - **Phase 1** — spliceql lexer ✅
 - **Phase 2** — spliceql parser + AST ✅
-- **Phase 3** — codonsplice-core compiler + VM + disassembler + CLI/TUI ✅ *(this)*
-- **Phase 4** — [cnvlens-core execution bridge](docs/PHASE4_DESIGN.md) + [npm/WASM package](docs/NPM_PACKAGE.md)
+- **Phase 3** — compiler + VM + disassembler + CLI/TUI ✅
+- **Phase 4** — [cnvlens-core execution bridge](docs/PHASE4_DESIGN.md) (real BAM/VCF execution, BAI seeking) ✅
+- **Phase 5** — VCF input, `$variable` templating, `SELECT` projection, streaming, `.spq` files, compiled binaries, grammar crate ✅
+- **Phase 6** — [indel calling, tumor/normal pairs, VCF annotation, CRAM support](docs/PHASE6_SCOPE.md) (planned)
+
+---
+
+## Known limitations
+
+- **Builtin functions are not implemented.** `abs(...)` etc. compile to `CALL_FN`
+  but evaluate to `null` at runtime.
+- **`INTO bed` drops projected `SELECT` rows** (the same class of bug fixed for
+  `INTO vcf` in v0.1.4 — tracked in
+  [#1](https://github.com/Pogo-Bash/codonsplice/issues/1)).
+- **`INTO bam` / `cram`** are unsupported sinks (`UnsupportedInto`).
+- **Compiled `.spq.bc` binaries** don't carry the static `region`, so they
+  fall back to full-scan + predicate filtering (correct, just without the
+  BAI-seek optimization).
+
+---
 
 ## License
 
