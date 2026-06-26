@@ -625,15 +625,17 @@ const FORMATS = ['bam', 'vcf', 'bed', 'fasta', 'cram']
 const OPS = ['variants', 'cnv', 'coverage', 'reads', 'header']
 const PARAMS = ['min_af', 'min_allele_freq', 'min_depth', 'min_base_quality', 'min_mapping_quality', 'min_variant_reads', 'min_strand_bias', 'window_size', 'amp_threshold', 'del_threshold', 'min_windows', 'segmentation_method']
 const FIELDS = ['chr', 'chrom', 'pos', 'ref', 'alt', 'qual', 'depth', 'ref_count', 'alt_count', 'af', 'allele_freq', 'strand_bias', 'kind', 'filter', 'id', 'mapq', 'flag', 'strand', 'start', 'end', 'coverage', 'normalized']
+const FUNCTIONS = ['abs', 'floor', 'ceil', 'round', 'sqrt', 'pow', 'min', 'max', 'log', 'coalesce', 'len', 'upper', 'lower', 'concat', 'contains', 'starts_with', 'ends_with', 'substr', 'gc', 'revcomp', 'translate', 'codon_at']
 const KW = new Set(KEYWORDS.map((s) => s.toLowerCase()))
 const TY = new Set([...FORMATS, ...OPS])
 const PR = new Set(PARAMS)
 const FD = new Set(FIELDS)
+const FN = new Set(FUNCTIONS)
 
 const tokenTable = {
   spliceKw: t.keyword, spliceStr: t.string, spliceNum: t.number, spliceCom: t.lineComment,
   spliceOp: t.operator, spliceTy: t.typeName, splicePr: t.propertyName, spliceFd: t.variableName,
-  spliceVar: t.special(t.variableName),
+  spliceVar: t.special(t.variableName), spliceFn: t.function(t.variableName),
 }
 
 const language = StreamLanguage.define({
@@ -649,6 +651,7 @@ const language = StreamLanguage.define({
       if (KW.has(w)) return 'spliceKw'
       if (TY.has(w)) return 'spliceTy'
       if (PR.has(w)) return 'splicePr'
+      if (FN.has(w)) return 'spliceFn'
       if (FD.has(w)) return 'spliceFd'
       return null
     }
@@ -668,12 +671,14 @@ const highlight = HighlightStyle.define([
   { tag: t.propertyName, color: '#74c7ec' },
   { tag: t.variableName, color: '#cdd6f4' },
   { tag: t.special(t.variableName), color: '#f5c2e7' },
+  { tag: t.function(t.variableName), color: '#89b4fa' },
 ])
 
 const COMPLETIONS = [
   ...KEYWORDS.map((l) => ({ label: l, type: 'keyword', detail: 'clause' })),
   ...FORMATS.map((l) => ({ label: l, type: 'type', detail: 'format' })),
   ...OPS.map((l) => ({ label: l, type: 'function', detail: 'operation' })),
+  ...FUNCTIONS.map((l) => ({ label: l, type: 'function', detail: 'function' })),
   ...PARAMS.map((l) => ({ label: l, type: 'property', detail: 'param' })),
   ...FIELDS.map((l) => ({ label: l, type: 'variable', detail: 'field' })),
 ]
