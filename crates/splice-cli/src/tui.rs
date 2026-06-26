@@ -83,6 +83,9 @@ struct App {
     tab: Tab,
     build_target: usize,
     build_release: bool,
+    /// rustup targets installed on this machine (for marking BUILD targets that
+    /// would fail to cross-compile). Empty if rustup isn't available.
+    installed_targets: Vec<String>,
     /// Async build state: receiver for streamed output, accumulated lines, and
     /// a spinner frame. `building` is true while a `splice build` runs off-thread
     /// so the TUI stays responsive (the build used to block the event loop).
@@ -118,6 +121,7 @@ impl App {
             tab: Tab::Editor,
             build_target: 0,
             build_release: true,
+            installed_targets: detect_installed_targets(),
             build_rx: None,
             build_lines: Vec::new(),
             build_label: String::new(),
@@ -163,14 +167,47 @@ impl App {
         self.scroll = 0;
     }
 
+    /// The rustup target triple a BUILD_TARGETS entry needs, if any (native host
+    /// needs none). wasm needs `wasm32-unknown-unknown`.
+    fn required_triple(idx: usize) -> Option<&'static str> {
+        let (_, target, wasm) = BUILD_TARGETS[idx];
+        if wasm {
+            Some("wasm32-unknown-unknown")
+        } else {
+            target
+        }
+    }
+
+    /// Whether the target at `idx` can be built here (its rustup target is
+    /// installed). The native host target is always available.
+    fn target_available(&self, idx: usize) -> bool {
+        match Self::required_triple(idx) {
+            None => true,
+            Some(t) => self.installed_targets.iter().any(|s| s == t),
+        }
+    }
+
     /// Kick off a `splice build` subprocess off-thread, streaming its output
     /// into the OUTPUT pane so the TUI stays responsive (a spinner animates while
-    /// it runs). No-op if a build is already in flight.
+    /// it runs). No-op if a build is already in flight. Uninstalled cross-targets
+    /// show an install hint instead of a long, failing build.
     fn run_build(&mut self) {
         if self.building {
             return; // a build is already running
         }
         let (label, target, wasm) = BUILD_TARGETS[self.build_target];
+
+        // Guard: don't spawn a cross-compile that's doomed for a missing target.
+        if !self.target_available(self.build_target) {
+            let triple = Self::required_triple(self.build_target).unwrap_or("");
+            self.output = OutputPane::from_text(
+                "OUTPUT · build",
+                &format!(
+                    "target `{label}` is not installed.\n\nAdd it with:\n  rustup target add {triple}\n\nThen rebuild (Ctrl+Enter)."
+                ),
+            );
+            return;
+        }
         let name = self.build_output_name();
 
         // Write the editor content to a temp .spq.
@@ -555,12 +592,19 @@ impl App {
         ];
         for (i, (label, _, _)) in BUILD_TARGETS.iter().enumerate() {
             let marker = if i == self.build_target { "●" } else { "○" };
-            let style = if i == self.build_target {
-                Style::new().fg(Color::Rgb(166, 227, 161)).bold()
-            } else {
-                Style::new().fg(Color::Gray)
+            let available = self.target_available(i);
+            let selected = i == self.build_target;
+            let style = match (selected, available) {
+                (true, true) => Style::new().fg(Color::Rgb(166, 227, 161)).bold(),
+                (true, false) => Style::new().fg(Color::Rgb(243, 139, 168)).bold(),
+                (false, true) => Style::new().fg(Color::Gray),
+                (false, false) => Style::new().fg(Color::DarkGray),
             };
-            lines.push(Line::from(Span::styled(format!("  {marker} {label}"), style)));
+            let suffix = if available { "" } else { "  (not installed)" };
+            lines.push(Line::from(Span::styled(
+                format!("  {marker} {label}{suffix}"),
+                style,
+            )));
         }
         lines.push(Line::from(""));
         let mode = if self.build_release { "● release   ○ debug" } else { "○ release   ● debug" };
@@ -807,6 +851,24 @@ fn run_loop(terminal: &mut DefaultTerminal) -> io::Result<()> {
     Ok(())
 }
 
+/// The rustup targets installed on this machine (`rustup target list
+/// --installed`), one triple per line. Empty if rustup isn't available.
+fn detect_installed_targets() -> Vec<String> {
+    std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Run `exe build …`, forwarding merged stdout/stderr lines to `tx`. Returns
 /// whether the build exited successfully.
 fn run_streamed_build(exe: &std::path::Path, args: &[String], tx: &mpsc::Sender<BuildMsg>) -> bool {
@@ -920,5 +982,48 @@ mod tests {
         app.build_lines = vec!["existing".into()];
         app.run_build(); // must not start a second build
         assert_eq!(app.build_lines, vec!["existing".to_string()]);
+    }
+
+    #[test]
+    fn native_target_always_available() {
+        let mut app = App::new();
+        app.installed_targets = vec![]; // nothing installed
+        assert_eq!(BUILD_TARGETS[0].0, "native (host)");
+        assert!(app.target_available(0), "native host needs no rustup target");
+    }
+
+    #[test]
+    fn cross_target_guarded_when_not_installed() {
+        let mut app = App::new();
+        app.installed_targets = vec!["x86_64-unknown-linux-gnu".into()];
+        // Find the windows cross target (has a triple, not installed here).
+        let win = BUILD_TARGETS
+            .iter()
+            .position(|(_, t, _)| *t == Some("x86_64-pc-windows-msvc"))
+            .unwrap();
+        assert!(!app.target_available(win));
+
+        app.tab = Tab::Build;
+        app.build_target = win;
+        app.run_build();
+        assert!(!app.building, "an unavailable target must not start a build");
+        let text: String = app
+            .output
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(text.contains("rustup target add"), "should show an install hint: {text}");
+    }
+
+    #[test]
+    fn installed_cross_target_is_available() {
+        let mut app = App::new();
+        app.installed_targets = vec!["x86_64-pc-windows-msvc".into()];
+        let win = BUILD_TARGETS
+            .iter()
+            .position(|(_, t, _)| *t == Some("x86_64-pc-windows-msvc"))
+            .unwrap();
+        assert!(app.target_available(win));
     }
 }
