@@ -40,9 +40,10 @@ enum Command {
     /// Parse and type-check a query without executing it.
     Check { source: String },
     /// Scaffold a new front-end project (react/vue/svelte/astro) wired to splice.
+    /// With no framework, opens an interactive menu.
     Create {
-        /// Framework: react | vue | svelte | astro.
-        framework: String,
+        /// Framework: react | vue | svelte | astro. Omit for the interactive menu.
+        framework: Option<String>,
         /// Project directory name (default: splice-app).
         name: Option<String>,
     },
@@ -116,7 +117,7 @@ fn main() -> std::process::ExitCode {
         Some(Command::Query { source }) => cmd_query(&source),
         Some(Command::Compile { source }) => cmd_compile(&source),
         Some(Command::Check { source }) => cmd_check(&source),
-        Some(Command::Create { framework, name }) => create::cmd_create(&framework, name),
+        Some(Command::Create { framework, name }) => create::cmd_create(framework, name),
         Some(Command::Update) => update::cmd_update(),
         Some(Command::Uninstall) => update::cmd_uninstall(),
         Some(Command::New { name }) => spq::cmd_new(&name),
