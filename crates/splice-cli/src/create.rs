@@ -7,9 +7,12 @@
 //! tooling does the heavy lifting so the generated project always matches the
 //! framework's current conventions.
 
-use std::io;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -163,14 +166,83 @@ fn example_files(fw: Framework) -> Vec<(&'static str, &'static str)> {
     }
 }
 
-/// Run a command inheriting stdio (so interactive prompts + output flow through).
-fn run_inherit(prog: &str, args: &[String], cwd: Option<&Path>) -> bool {
+// ANSI colors for the "splicifying" UX.
+const MAUVE: &str = "\x1b[38;5;183m";
+const GREEN: &str = "\x1b[38;5;114m";
+const RED: &str = "\x1b[38;5;210m";
+const DIM: &str = "\x1b[2m";
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
+
+/// Run a command with a colored spinner, hiding its output behind `label`.
+///
+/// stdin is `null` on purpose: it forces scaffolders like `create-vite` /
+/// `create-astro` into their non-interactive path (they only prompt on a TTY),
+/// so the project is created deterministically as `<name>` with our template
+/// instead of dropping into an interactive wizard.
+fn run_with_spinner(label: &str, prog: &str, args: &[String], cwd: Option<&Path>) -> bool {
     let mut cmd = Command::new(prog);
-    cmd.args(args).stdin(Stdio::inherit());
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
-    matches!(cmd.status(), Ok(s) if s.success())
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("{RED}✗{RESET} {label}: {e}");
+            return false;
+        }
+    };
+
+    // Animate a spinner only on a real terminal; when piped (CI, capture), print
+    // one static line so logs stay clean.
+    let tty = io::stdout().is_terminal();
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let spinner = if tty {
+        let lbl = label.to_string();
+        Some(thread::spawn(move || {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut i = 0;
+            while stop_rx.try_recv().is_err() {
+                print!("\r{MAUVE}{}{RESET} {lbl}…", frames[i % frames.len()]);
+                let _ = io::stdout().flush();
+                i += 1;
+                thread::sleep(Duration::from_millis(90));
+            }
+        }))
+    } else {
+        println!("{MAUVE}•{RESET} {label}…");
+        None
+    };
+
+    let output = child.wait_with_output();
+    let _ = stop_tx.send(());
+    if let Some(h) = spinner {
+        let _ = h.join();
+        print!("\r\x1b[2K"); // clear the spinner line
+    }
+
+    match output {
+        Ok(o) if o.status.success() => {
+            println!("{GREEN}✓{RESET} {label}");
+            true
+        }
+        Ok(o) => {
+            println!("{RED}✗{RESET} {label}");
+            let err = String::from_utf8_lossy(&o.stderr);
+            for line in err.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev() {
+                println!("  {DIM}{line}{RESET}");
+            }
+            false
+        }
+        Err(e) => {
+            println!("{RED}✗{RESET} {label}: {e}");
+            false
+        }
+    }
 }
 
 pub fn cmd_create(framework: Option<String>, name: Option<String>) -> ExitCode {
@@ -198,58 +270,80 @@ pub fn cmd_create(framework: Option<String>, name: Option<String>) -> ExitCode {
     scaffold(fw, &name)
 }
 
-/// Scaffold `<name>` for `fw`: official tooling → inject deps → demo → install.
+/// Scaffold `<name>` for `fw`: official tooling → inject deps → demo → install,
+/// with a colored "splicifying" flow.
 fn scaffold(fw: Framework, name: &str) -> ExitCode {
     let root = Path::new(name);
     if root.exists() {
-        eprintln!("✗ `{name}` already exists — choose another name or remove it.");
+        eprintln!("{RED}✗{RESET} `{name}` already exists — choose another name or remove it.");
         return ExitCode::FAILURE;
     }
 
-    // 1. Scaffold via the official tooling.
+    println!("{MAUVE}{BOLD}✦ Splicifying your {} project «{name}»{RESET}\n", fw.label());
+
+    // 1. Scaffold deterministically via the official tooling (stdin null).
     let (prog, args) = scaffold_command(fw, name);
-    println!("→ scaffolding {} project `{name}`…", fw.label());
-    println!("  $ {prog} {}", args.join(" "));
-    if !run_inherit(&prog, &args, None) {
-        eprintln!("✗ scaffold failed (is Node.js / npm installed?).");
+    if !run_with_spinner(&format!("Scaffolding {} app", fw.label()), &prog, &args, None) {
+        eprintln!("{RED}✗{RESET} scaffold failed (is Node.js / npm installed?).");
+        return ExitCode::FAILURE;
+    }
+    if !root.join("package.json").exists() {
+        eprintln!("{RED}✗{RESET} expected `{name}/` but the scaffolder didn't create it.");
         return ExitCode::FAILURE;
     }
 
-    // 2. Inject the @codonsplice dependency.
+    // 2. Wire in the @codonsplice dependency.
     let pkg_path = root.join("package.json");
     match std::fs::read_to_string(&pkg_path) {
         Ok(s) => match inject_dependencies(&s, fw) {
             Ok(updated) => {
-                if std::fs::write(&pkg_path, updated).is_ok() {
-                    println!("✓ added {} to dependencies", fw.deps().join(", "));
-                }
+                let _ = std::fs::write(&pkg_path, updated);
+                println!("{GREEN}✓{RESET} Wired in {} (powered by @codonsplice/wasm)", fw.pkg());
             }
-            Err(e) => eprintln!("⚠ could not edit package.json ({e}); add {} manually", fw.pkg()),
+            Err(e) => eprintln!("{RED}⚠{RESET} could not edit package.json ({e})"),
         },
-        Err(e) => eprintln!("⚠ could not read {} ({e}); add {} manually", pkg_path.display(), fw.pkg()),
+        Err(e) => eprintln!("{RED}⚠{RESET} could not read {} ({e})", pkg_path.display()),
     }
 
-    // 3. Write the SpliceQL demo (replacing the framework's default starter).
+    // 3. Add our twist: replace the framework's default starter with the live
+    //    SpliceQL demo (query → bytecode playground + Run button), and brand the
+    //    page title.
     for (rel, contents) in example_files(fw) {
         let path = root.join(rel);
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if std::fs::write(&path, contents).is_ok() {
-            println!("✓ wrote {}", path.display());
-        }
+        let _ = std::fs::write(&path, contents);
+    }
+    brand_index_html(root, fw);
+    println!("{GREEN}✓{RESET} Added the SpliceQL demo (live playground + Run button)");
+
+    // 4. Install dependencies (the wrapper + its wasm core).
+    if !run_with_spinner("Installing dependencies", npm(), &["install".to_string()], Some(root)) {
+        eprintln!("{RED}⚠{RESET} `npm install` failed — run it yourself in {name}/");
     }
 
-    // 4. Install dependencies (including the @codonsplice wrapper just added).
-    println!("→ installing dependencies…");
-    if !run_inherit(npm(), &["install".to_string()], Some(root)) {
-        eprintln!("⚠ `npm install` failed — run it yourself in {name}/");
-    }
-
-    println!("\n✓ created {name}");
+    println!("\n{GREEN}{BOLD}✓ Splicified!{RESET} Your SpliceQL-powered app is ready.\n");
     println!("  cd {name}");
     println!("  npm run dev");
     ExitCode::SUCCESS
+}
+
+/// Brand the scaffolded `index.html` title (Vite frameworks). Best-effort.
+fn brand_index_html(root: &Path, fw: Framework) {
+    let idx = root.join("index.html");
+    if let Ok(html) = std::fs::read_to_string(&idx) {
+        // Replace whatever the template put in <title>…</title>.
+        if let (Some(a), Some(b)) = (html.find("<title>"), html.find("</title>")) {
+            if b > a {
+                let mut out = String::with_capacity(html.len());
+                out.push_str(&html[..a + "<title>".len()]);
+                out.push_str(&format!("SpliceQL × {}", fw.label()));
+                out.push_str(&html[b..]);
+                let _ = std::fs::write(&idx, out);
+            }
+        }
+    }
 }
 
 // ── Interactive menu ─────────────────────────────────────────────────────────
@@ -258,9 +352,16 @@ fn scaffold(fw: Framework, name: &str) -> ExitCode {
 const ACCENT: Color = Color::Rgb(203, 166, 247);
 const SUBTLE: Color = Color::Rgb(127, 132, 156);
 
+#[derive(PartialEq, Clone, Copy)]
+enum MenuFocus {
+    Framework,
+    Name,
+}
+
 struct Menu {
     fw_idx: usize,
     name: String,
+    focus: MenuFocus,
     done: Option<Option<(Framework, String)>>, // Some(Some)=create, Some(None)=cancel
 }
 
@@ -278,6 +379,7 @@ fn menu_loop(terminal: &mut DefaultTerminal) -> io::Result<Option<(Framework, St
     let mut m = Menu {
         fw_idx: 0,
         name: "splice-app".to_string(),
+        focus: MenuFocus::Framework,
         done: None,
     };
     loop {
@@ -290,10 +392,19 @@ fn menu_loop(terminal: &mut DefaultTerminal) -> io::Result<Option<(Framework, St
             match key.code {
                 KeyCode::Esc => m.done = Some(None),
                 KeyCode::Char('c') if ctrl => m.done = Some(None),
-                KeyCode::Up => m.fw_idx = m.fw_idx.saturating_sub(1),
-                KeyCode::Down => m.fw_idx = (m.fw_idx + 1).min(FRAMEWORKS.len() - 1),
-                KeyCode::Backspace => {
-                    m.name.pop();
+                // Up/Down (and Tab) move between the Framework and Name fields.
+                KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                    m.focus = match m.focus {
+                        MenuFocus::Framework => MenuFocus::Name,
+                        MenuFocus::Name => MenuFocus::Framework,
+                    };
+                }
+                // Left/Right cycle the framework when it's focused.
+                KeyCode::Left if m.focus == MenuFocus::Framework => {
+                    m.fw_idx = m.fw_idx.saturating_sub(1);
+                }
+                KeyCode::Right if m.focus == MenuFocus::Framework => {
+                    m.fw_idx = (m.fw_idx + 1).min(FRAMEWORKS.len() - 1);
                 }
                 KeyCode::Enter => {
                     let name = if m.name.trim().is_empty() {
@@ -303,8 +414,14 @@ fn menu_loop(terminal: &mut DefaultTerminal) -> io::Result<Option<(Framework, St
                     };
                     m.done = Some(Some((FRAMEWORKS[m.fw_idx], name)));
                 }
-                // Project-name-safe characters only.
-                KeyCode::Char(c) if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') => {
+                // Editing the name (only when that field is focused).
+                KeyCode::Backspace if m.focus == MenuFocus::Name => {
+                    m.name.pop();
+                }
+                KeyCode::Char(c)
+                    if m.focus == MenuFocus::Name
+                        && (c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) =>
+                {
                     m.name.push(c)
                 }
                 _ => {}
@@ -321,7 +438,7 @@ fn draw_menu(frame: &mut Frame, m: &Menu) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4), // title
-            Constraint::Length(6), // framework list
+            Constraint::Length(3), // framework row
             Constraint::Length(3), // name
             Constraint::Min(3),    // wasm note + hints
         ])
@@ -340,29 +457,44 @@ fn draw_menu(frame: &mut Frame, m: &Menu) {
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, rows[0]);
 
-    let mut fw_lines = vec![Line::from(Span::styled("Framework", Style::new().fg(SUBTLE).bold()))];
+    let fw_focused = m.focus == MenuFocus::Framework;
+    // Framework choices on one row; ◂ ▸ hint when focused.
+    let mut spans = vec![Span::styled(
+        "Framework  ",
+        Style::new().fg(SUBTLE).bold(),
+    )];
     for (i, fw) in FRAMEWORKS.iter().enumerate() {
         let selected = i == m.fw_idx;
-        let marker = if selected { "●" } else { "○" };
-        let style = if selected {
+        let style = if selected && fw_focused {
+            Style::new().fg(Color::Black).bg(ACCENT).bold()
+        } else if selected {
             Style::new().fg(ACCENT).bold()
         } else {
             Style::new().fg(Color::Gray)
         };
-        fw_lines.push(Line::from(Span::styled(format!("  {marker} {}", fw.label()), style)));
+        spans.push(Span::styled(format!(" {} ", fw.label()), style));
+        spans.push(Span::raw(" "));
+    }
+    if fw_focused {
+        spans.push(Span::styled("  ◂ ▸", Style::new().fg(SUBTLE)));
     }
     frame.render_widget(
-        Paragraph::new(fw_lines).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(Line::from(spans)).block(field_block(fw_focused)),
         rows[1],
     );
 
-    let name = Paragraph::new(Line::from(vec![
+    let name_focused = m.focus == MenuFocus::Name;
+    let mut name_spans = vec![
         Span::styled("Name  ", Style::new().fg(SUBTLE).bold()),
         Span::styled(&m.name, Style::new().fg(Color::Cyan)),
-        Span::styled("▏", Style::new().fg(ACCENT)),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(name, rows[2]);
+    ];
+    if name_focused {
+        name_spans.push(Span::styled("▏", Style::new().fg(ACCENT)));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(name_spans)).block(field_block(name_focused)),
+        rows[2],
+    );
 
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -375,12 +507,22 @@ fn draw_menu(frame: &mut Frame, m: &Menu) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "↑/↓ framework · type to name · Enter create · Esc cancel",
+            "↑/↓ move between fields · ◂ ▸ pick framework · type to name · Enter create · Esc cancel",
             Style::new().fg(Color::DarkGray),
         )),
     ])
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(info, rows[3]);
+}
+
+/// A bordered block whose border brightens when the field is focused.
+fn field_block(focused: bool) -> Block<'static> {
+    let style = if focused {
+        Style::new().fg(ACCENT)
+    } else {
+        Style::new().fg(SUBTLE)
+    };
+    Block::default().borders(Borders::ALL).border_style(style)
 }
 
 // ── Demo templates ───────────────────────────────────────────────────────────
