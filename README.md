@@ -49,7 +49,7 @@ winget install Pogo-Bash.CodonSplice
 ```
 
 `splice update` self-updates to the latest release; `splice uninstall` removes
-it. Current release: **v0.1.4**.
+it. Current release: **v0.1.8**.
 
 ---
 
@@ -167,7 +167,8 @@ splice check   "FROM bam …"     parse + type-check only, no execution
 splice new     <name>           scaffold <name>.spq
 splice run     <file.spq> …     run a script, binding $vars from --flag value
 splice build   <file.spq> …     compile a script to a native binary or .wasm
-splice install | update | uninstall    manage the installation
+splice create  [framework] …    scaffold a web app wired to splice-wasm (menu if no args)
+splice update | uninstall       self-update / remove the binary
 ```
 
 `splice compile` shows exactly what the VM runs — pipeline opcodes inline, with
@@ -222,21 +223,37 @@ Launching `splice` with no subcommand opens a three-pane educational editor:
 ## Browser / npm
 
 CodonSplice compiles to WebAssembly and runs entirely client-side — no server,
-no genomic data leaving the browser:
+no genomic data leaving the browser. The fastest start is the scaffolder:
 
-```js
-import { execute } from "@codonsplice/wasm";
-
-const result = execute(
-  'FROM bam "sample.bam" WHERE chr = "7" CALL variants',
-  { "sample.bam": bamBytes },   // file name → Uint8Array
-  { /* $vars */ }
-);
+```sh
+splice create                  # interactive menu — pick react / vue / svelte / astro
+splice create react my-app     # …or non-interactively
 ```
 
-Framework wrappers thread the same API through idiomatic hooks/components:
-`@codonsplice/react`, `@codonsplice/vue`, `@codonsplice/svelte`,
-`@codonsplice/astro`. See [docs/NPM_PACKAGE.md](docs/NPM_PACKAGE.md).
+It generates a Vite/Astro app pre-wired to `@codonsplice/wasm` with a live
+SpliceQL playground — the query type-checks and compiles to bytecode as you
+type, plus a BAM upload to run a real query.
+
+To wire it up by hand, the ergonomic helpers live at `@codonsplice/wasm/helpers`:
+
+```js
+import { execute, compile, check } from "@codonsplice/wasm/helpers";
+
+const result = await execute({
+  query: 'FROM bam "sample.bam" WHERE chr = "7" CALL variants',
+  files: { "sample.bam": bamBytes },   // name → File | ArrayBuffer | Uint8Array
+});
+```
+
+Framework wrappers add idiomatic state (`useSpliceQL` for react/vue,
+`createSpliceQL` for svelte) and re-export the core tooling, so an app imports
+everything from one package:
+
+```js
+import { useSpliceQL, compile, check } from "@codonsplice/react";
+```
+
+`@codonsplice/{react,vue,svelte,astro}`. See [docs/NPM_PACKAGE.md](docs/NPM_PACKAGE.md).
 
 ---
 
@@ -322,10 +339,8 @@ in editors.
 ## Known limitations
 
 - **Builtin functions are not implemented.** `abs(...)` etc. compile to `CALL_FN`
-  but evaluate to `null` at runtime.
-- **`INTO bed` drops projected `SELECT` rows** (the same class of bug fixed for
-  `INTO vcf` in v0.1.4 — tracked in
-  [#1](https://github.com/Pogo-Bash/codonsplice/issues/1)).
+  but evaluate to `null` at runtime
+  ([#3](https://github.com/Pogo-Bash/codonsplice/issues/3)).
 - **`INTO bam` / `cram`** are unsupported sinks (`UnsupportedInto`).
 - **Compiled `.spq.bc` binaries** don't carry the static `region`, so they
   fall back to full-scan + predicate filtering (correct, just without the
