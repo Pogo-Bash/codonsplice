@@ -70,3 +70,9 @@ export async function check(query) {
   const engine = await initEngine()
   return engine.check(query)
 }
+
+/** Parse a query and return its AST as a readable tree (throws on parse error). */
+export async function ast(query) {
+  const engine = await initEngine()
+  return engine.ast(query)
+}

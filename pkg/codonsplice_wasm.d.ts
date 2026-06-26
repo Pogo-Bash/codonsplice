@@ -8,6 +8,11 @@ export class CodonSplice {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Parse a query and return its AST as a readable tree (for the demo's AST
+     * view). Errors as the parse error string.
+     */
+    ast(source: string): string;
+    /**
      * Parse + type-check only. Returns `null` on success, the error string on
      * failure.
      */
@@ -68,6 +73,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_codonsplice_free: (a: number, b: number) => void;
+    readonly codonsplice_ast: (a: number, b: number, c: number) => [number, number, number, number];
     readonly codonsplice_check: (a: number, b: number, c: number) => [number, number];
     readonly codonsplice_compile: (a: number, b: number, c: number) => [number, number, number, number];
     readonly codonsplice_execute: (a: number, b: number, c: number, d: any, e: any) => [number, number, number];
