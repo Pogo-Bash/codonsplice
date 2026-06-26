@@ -7,8 +7,18 @@
 //! tooling does the heavy lifting so the generated project always matches the
 //! framework's current conventions.
 
+use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
+
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+    DefaultTerminal, Frame,
+};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Framework {
@@ -17,6 +27,14 @@ pub enum Framework {
     Svelte,
     Astro,
 }
+
+/// The frameworks offered in the interactive menu, in display order.
+const FRAMEWORKS: [Framework; 4] = [
+    Framework::React,
+    Framework::Vue,
+    Framework::Svelte,
+    Framework::Astro,
+];
 
 impl Framework {
     fn parse(s: &str) -> Option<Framework> {
@@ -155,23 +173,41 @@ fn run_inherit(prog: &str, args: &[String], cwd: Option<&Path>) -> bool {
     matches!(cmd.status(), Ok(s) if s.success())
 }
 
-pub fn cmd_create(framework: &str, name: Option<String>) -> ExitCode {
-    let fw = match Framework::parse(framework) {
-        Some(f) => f,
-        None => {
-            eprintln!("✗ unknown framework {framework:?} — choose: react, vue, svelte, astro");
-            return ExitCode::FAILURE;
-        }
+pub fn cmd_create(framework: Option<String>, name: Option<String>) -> ExitCode {
+    // With a framework arg, run directly; otherwise open the interactive menu.
+    let (fw, name) = match framework {
+        Some(s) => match Framework::parse(&s) {
+            Some(f) => (f, name.unwrap_or_else(|| "splice-app".to_string())),
+            None => {
+                eprintln!("✗ unknown framework {s:?} — choose: react, vue, svelte, astro");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => match run_menu() {
+            Ok(Some(picked)) => picked,
+            Ok(None) => {
+                println!("cancelled — nothing created.");
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("✗ menu error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
     };
-    let name = name.unwrap_or_else(|| "splice-app".to_string());
-    let root = Path::new(&name);
+    scaffold(fw, &name)
+}
+
+/// Scaffold `<name>` for `fw`: official tooling → inject deps → demo → install.
+fn scaffold(fw: Framework, name: &str) -> ExitCode {
+    let root = Path::new(name);
     if root.exists() {
         eprintln!("✗ `{name}` already exists — choose another name or remove it.");
         return ExitCode::FAILURE;
     }
 
     // 1. Scaffold via the official tooling.
-    let (prog, args) = scaffold_command(fw, &name);
+    let (prog, args) = scaffold_command(fw, name);
     println!("→ scaffolding {} project `{name}`…", fw.label());
     println!("  $ {prog} {}", args.join(" "));
     if !run_inherit(&prog, &args, None) {
@@ -214,6 +250,137 @@ pub fn cmd_create(framework: &str, name: Option<String>) -> ExitCode {
     println!("  cd {name}");
     println!("  npm run dev");
     ExitCode::SUCCESS
+}
+
+// ── Interactive menu ─────────────────────────────────────────────────────────
+
+/// Mauve accent + subtle gray, matching the rest of the splice UI.
+const ACCENT: Color = Color::Rgb(203, 166, 247);
+const SUBTLE: Color = Color::Rgb(127, 132, 156);
+
+struct Menu {
+    fw_idx: usize,
+    name: String,
+    done: Option<Option<(Framework, String)>>, // Some(Some)=create, Some(None)=cancel
+}
+
+/// Run the `splice create` picker; returns the chosen `(framework, name)` or
+/// `None` if cancelled. Collects the choice in a TUI, then hands back so the
+/// scaffold runs on the normal terminal (npm needs inherited stdio).
+fn run_menu() -> io::Result<Option<(Framework, String)>> {
+    let mut terminal = ratatui::init();
+    let result = menu_loop(&mut terminal);
+    ratatui::restore();
+    result
+}
+
+fn menu_loop(terminal: &mut DefaultTerminal) -> io::Result<Option<(Framework, String)>> {
+    let mut m = Menu {
+        fw_idx: 0,
+        name: "splice-app".to_string(),
+        done: None,
+    };
+    loop {
+        terminal.draw(|f| draw_menu(f, &m))?;
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Esc => m.done = Some(None),
+                KeyCode::Char('c') if ctrl => m.done = Some(None),
+                KeyCode::Up => m.fw_idx = m.fw_idx.saturating_sub(1),
+                KeyCode::Down => m.fw_idx = (m.fw_idx + 1).min(FRAMEWORKS.len() - 1),
+                KeyCode::Backspace => {
+                    m.name.pop();
+                }
+                KeyCode::Enter => {
+                    let name = if m.name.trim().is_empty() {
+                        "splice-app".to_string()
+                    } else {
+                        m.name.trim().to_string()
+                    };
+                    m.done = Some(Some((FRAMEWORKS[m.fw_idx], name)));
+                }
+                // Project-name-safe characters only.
+                KeyCode::Char(c) if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') => {
+                    m.name.push(c)
+                }
+                _ => {}
+            }
+        }
+        if let Some(choice) = m.done {
+            return Ok(choice);
+        }
+    }
+}
+
+fn draw_menu(frame: &mut Frame, m: &Menu) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4), // title
+            Constraint::Length(6), // framework list
+            Constraint::Length(3), // name
+            Constraint::Min(3),    // wasm note + hints
+        ])
+        .split(frame.area());
+
+    let title = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("🧬 splice create", Style::new().fg(ACCENT).bold()),
+            Span::styled("  — new SpliceQL project", Style::new().fg(SUBTLE)),
+        ]),
+        Line::from(Span::styled(
+            "Scaffold a web app with the genomic query engine wired in.",
+            Style::new().fg(SUBTLE),
+        )),
+    ])
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(title, rows[0]);
+
+    let mut fw_lines = vec![Line::from(Span::styled("Framework", Style::new().fg(SUBTLE).bold()))];
+    for (i, fw) in FRAMEWORKS.iter().enumerate() {
+        let selected = i == m.fw_idx;
+        let marker = if selected { "●" } else { "○" };
+        let style = if selected {
+            Style::new().fg(ACCENT).bold()
+        } else {
+            Style::new().fg(Color::Gray)
+        };
+        fw_lines.push(Line::from(Span::styled(format!("  {marker} {}", fw.label()), style)));
+    }
+    frame.render_widget(
+        Paragraph::new(fw_lines).block(Block::default().borders(Borders::ALL)),
+        rows[1],
+    );
+
+    let name = Paragraph::new(Line::from(vec![
+        Span::styled("Name  ", Style::new().fg(SUBTLE).bold()),
+        Span::styled(&m.name, Style::new().fg(Color::Cyan)),
+        Span::styled("▏", Style::new().fg(ACCENT)),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(name, rows[2]);
+
+    let info = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "Pre-wired with @codonsplice/wasm — a live SpliceQL playground that",
+            Style::new().fg(Color::Green),
+        )),
+        Line::from(Span::styled(
+            "type-checks + compiles your query to bytecode in the browser.",
+            Style::new().fg(Color::Green),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "↑/↓ framework · type to name · Enter create · Esc cancel",
+            Style::new().fg(Color::DarkGray),
+        )),
+    ])
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(info, rows[3]);
 }
 
 // ── Demo templates ───────────────────────────────────────────────────────────
