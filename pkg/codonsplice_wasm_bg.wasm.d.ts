@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_codonsplice_free: (a: number, b: number) => void;
+export const codonsplice_ast: (a: number, b: number, c: number) => [number, number, number, number];
 export const codonsplice_check: (a: number, b: number, c: number) => [number, number];
 export const codonsplice_compile: (a: number, b: number, c: number) => [number, number, number, number];
 export const codonsplice_execute: (a: number, b: number, c: number, d: any, e: any) => [number, number, number];

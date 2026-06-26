@@ -163,20 +163,25 @@ fn inject_dependencies(pkg_json: &str, fw: Framework) -> serde_json::Result<Stri
 /// SpliceQL editor module from `src/`.
 fn example_files(fw: Framework) -> Vec<(&'static str, &'static str)> {
     match fw {
+        // For Vite templates we also overwrite the template's default global
+        // stylesheet (which centers + pads #app/#root), so our layout governs.
         Framework::React => vec![
             ("src/App.jsx", REACT_DEMO),
             ("src/splice-demo.css", CNV_CSS),
             ("src/spliceql-editor.js", EDITOR_JS),
+            ("src/index.css", RESET_CSS),
         ],
         Framework::Vue => vec![
             ("src/App.vue", VUE_DEMO),
             ("src/splice-demo.css", CNV_CSS),
             ("src/spliceql-editor.js", EDITOR_JS),
+            ("src/style.css", RESET_CSS),
         ],
         Framework::Svelte => vec![
             ("src/App.svelte", SVELTE_DEMO),
             ("src/splice-demo.css", CNV_CSS),
             ("src/spliceql-editor.js", EDITOR_JS),
+            ("src/app.css", RESET_CSS),
         ],
         Framework::Astro => vec![
             ("src/pages/index.astro", ASTRO_DEMO),
@@ -602,6 +607,10 @@ fn field_block(focused: bool) -> Block<'static> {
 
 // ── Demo templates ───────────────────────────────────────────────────────────
 
+/// Overwrites the framework template's default global stylesheet (which centers
+/// and pads `#app`/`#root`, leaving big side gaps and right-shifted code).
+const RESET_CSS: &str = "/* default template styles removed by `splice create` — see splice-demo.css */\n";
+
 /// Shared CodeMirror 6 editor with SpliceQL syntax highlighting + JetBrains-style
 /// autocomplete. Written to `src/spliceql-editor.js`; every framework mounts it.
 const EDITOR_JS: &str = r##"import { EditorView, minimalSetup } from 'codemirror'
@@ -677,9 +686,9 @@ function complete(ctx) {
 
 const theme = EditorView.theme(
   {
-    '&': { height: '100%', backgroundColor: '#11111b', color: '#cdd6f4', fontSize: '13px' },
+    '&': { height: '100%', backgroundColor: '#11111b', color: '#cdd6f4', fontSize: '13px', textAlign: 'left' },
     '.cm-scroller': { fontFamily: "'JetBrains Mono', ui-monospace, monospace", lineHeight: '1.6', overflow: 'auto' },
-    '.cm-content': { caretColor: '#cba6f7', padding: '8px 0' },
+    '.cm-content': { caretColor: '#cba6f7', padding: '8px 0', textAlign: 'left' },
     '.cm-gutters': { backgroundColor: '#11111b', color: '#45475a', border: 'none' },
     '.cm-activeLine': { backgroundColor: 'rgba(49,50,68,0.25)' },
     '.cm-activeLineGutter': { backgroundColor: 'transparent', color: '#7f849c' },
@@ -734,6 +743,8 @@ const CNV_CSS: &str = r##"@import url('https://fonts.googleapis.com/css2?family=
 }
 * { box-sizing: border-box; }
 html, body, #root, #app { height: 100%; }
+/* Neutralize the framework template's default centering/padding on the mount node. */
+#root, #app { max-width: none; margin: 0; padding: 0; text-align: left; display: block; }
 body {
   margin: 0; background: var(--crust); color: var(--text);
   font-family: 'JetBrains Mono', ui-monospace, monospace; -webkit-font-smoothing: antialiased;
@@ -763,8 +774,16 @@ body {
 .body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--surface0); }
 .pane:last-child { border-right: none; }
-.pane-head { display: flex; align-items: center; gap: .6rem; padding: .45rem .8rem; border-bottom: 1px solid var(--surface0); background: var(--base); flex: 0 0 auto; }
+.pane-head { display: flex; align-items: center; gap: .6rem; padding: .4rem .8rem; border-bottom: 1px solid var(--surface0); background: var(--base); flex: 0 0 auto; min-height: 2.1rem; }
 .label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--subtext1); }
+
+.view-select {
+  font-family: inherit; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--subtext1); background: var(--base); border: 1px solid var(--surface0);
+  border-radius: .35rem; padding: .15rem .45rem; cursor: pointer;
+}
+.view-select:focus { outline: none; border-color: var(--mauve); }
+.view-select option { background: var(--base); color: var(--text); }
 
 .editor-host { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .editor-host .cm-editor { height: 100%; }
@@ -802,7 +821,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 "##;
 
 const REACT_DEMO: &str = r##"import { useState, useEffect, useRef, useCallback } from 'react'
-import { useSpliceQL, compile, check } from '@codonsplice/react'
+import { useSpliceQL, compile, check, ast } from '@codonsplice/react'
 import { mountEditor } from './spliceql-editor.js'
 import './splice-demo.css'
 
@@ -819,14 +838,16 @@ const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v
 export default function App() {
   const { execute, result, error, loading } = useSpliceQL()
   const [query, setQuery] = useState(QUERY)
+  const [view, setView] = useState('output')
   const [bytecode, setBytecode] = useState('')
+  const [astText, setAstText] = useState('')
   const [typeError, setTypeError] = useState(null)
   const [files, setFiles] = useState(null)
   const host = useRef(null)
 
   useEffect(() => {
-    const view = mountEditor(host.current, { doc: QUERY, onChange: setQuery })
-    return () => view.destroy()
+    const v = mountEditor(host.current, { doc: QUERY, onChange: setQuery })
+    return () => v.destroy()
   }, [])
 
   useEffect(() => {
@@ -846,12 +867,11 @@ export default function App() {
   useEffect(() => {
     let on = true
     const id = setTimeout(async () => {
-      try {
-        const err = await check(query)
-        if (!on) return
-        setTypeError(err)
-        setBytecode(err ? '' : await compile(query))
-      } catch (e) { if (on) { setTypeError(String(e)); setBytecode('') } }
+      const err = await check(query).catch((e) => String(e))
+      if (!on) return
+      setTypeError(err)
+      try { setBytecode(await compile(query)) } catch (e) { setBytecode('') }
+      try { setAstText(await ast(query)) } catch (e) { setAstText(String(e)) }
     }, 180)
     return () => { on = false; clearTimeout(id) }
   }, [query])
@@ -860,13 +880,16 @@ export default function App() {
 
   const rows = Array.isArray(result) ? result : []
   const cols = rows.length ? Object.keys(rows[0]) : []
+  const paneText = view === 'bytecode' ? (bytecode || '—')
+    : view === 'ast' ? (astText || '—')
+    : (result != null ? JSON.stringify(result, null, 2) : '—')
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="logo">CodonSplice</span>
         <span className="divider">│</span>
-        <span className="muted">SpliceQL query engine · React</span>
+        <span className="muted">SpliceQL query engine · React + Vite</span>
         <button className="btn" onClick={run} disabled={loading || !files || !!typeError}>
           {loading ? 'Running…' : files ? '▶ Run' : 'Loading BAM…'}
         </button>
@@ -885,8 +908,14 @@ export default function App() {
 
         <section className="pane">
           <div className="sub-pane">
-            <div className="pane-head"><span className="label">bytecode</span></div>
-            <pre className="scroll term">{bytecode || '—'}</pre>
+            <div className="pane-head">
+              <select className="view-select" value={view} onChange={(e) => setView(e.target.value)}>
+                <option value="output">Output</option>
+                <option value="bytecode">Bytecode</option>
+                <option value="ast">AST</option>
+              </select>
+            </div>
+            <pre className="scroll term">{paneText}</pre>
           </div>
           <div className="sub-pane">
             <div className="pane-head">
@@ -923,7 +952,7 @@ export default function App() {
 
 const VUE_DEMO: &str = r##"<script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useSpliceQL, compile, check } from '@codonsplice/vue'
+import { useSpliceQL, compile, check, ast } from '@codonsplice/vue'
 import { mountEditor } from './spliceql-editor.js'
 import './splice-demo.css'
 
@@ -939,31 +968,39 @@ const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v
 
 const { execute, result, error, loading } = useSpliceQL()
 const query = ref(QUERY)
+const view = ref('output')
 const bytecode = ref('')
+const astText = ref('')
 const typeError = ref(null)
 const files = ref(null)
 const host = ref(null)
-let view = null
+let editor = null
 
 const rows = computed(() => (Array.isArray(result.value) ? result.value : []))
 const cols = computed(() => (rows.value.length ? Object.keys(rows.value[0]) : []))
+const paneText = computed(() =>
+  view.value === 'bytecode' ? (bytecode.value || '—')
+    : view.value === 'ast' ? (astText.value || '—')
+    : (result.value != null ? JSON.stringify(result.value, null, 2) : '—')
+)
 
 onMounted(async () => {
-  view = mountEditor(host.value, { doc: QUERY, onChange: (v) => { query.value = v } })
+  editor = mountEditor(host.value, { doc: QUERY, onChange: (v) => { query.value = v } })
   try {
     const buf = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
     files.value = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
     await execute({ query: QUERY, files: files.value })
   } catch (e) { /* idle if missing */ }
 })
-onBeforeUnmount(() => { if (view) view.destroy() })
+onBeforeUnmount(() => { if (editor) editor.destroy() })
 
 let timer
 watch(query, (q) => {
   clearTimeout(timer)
   timer = setTimeout(async () => {
-    try { const err = await check(q); typeError.value = err; bytecode.value = err ? '' : await compile(q) }
-    catch (e) { typeError.value = String(e); bytecode.value = '' }
+    typeError.value = await check(q).catch((e) => String(e))
+    try { bytecode.value = await compile(q) } catch (e) { bytecode.value = '' }
+    try { astText.value = await ast(q) } catch (e) { astText.value = String(e) }
   }, 180)
 }, { immediate: true })
 
@@ -975,7 +1012,7 @@ function run() { if (files.value) execute({ query: query.value, files: files.val
     <header class="topbar">
       <span class="logo">CodonSplice</span>
       <span class="divider">│</span>
-      <span class="muted">SpliceQL query engine · Vue</span>
+      <span class="muted">SpliceQL query engine · Vue + Vite</span>
       <button class="btn" @click="run" :disabled="loading || !files || !!typeError">
         {{ loading ? 'Running…' : files ? '▶ Run' : 'Loading BAM…' }}
       </button>
@@ -993,8 +1030,14 @@ function run() { if (files.value) execute({ query: query.value, files: files.val
 
       <section class="pane">
         <div class="sub-pane">
-          <div class="pane-head"><span class="label">bytecode</span></div>
-          <pre class="scroll term">{{ bytecode || '—' }}</pre>
+          <div class="pane-head">
+            <select class="view-select" v-model="view">
+              <option value="output">Output</option>
+              <option value="bytecode">Bytecode</option>
+              <option value="ast">AST</option>
+            </select>
+          </div>
+          <pre class="scroll term">{{ paneText }}</pre>
         </div>
         <div class="sub-pane">
           <div class="pane-head"><span class="label">results{{ rows.length ? ` · ${rows.length}` : '' }}</span></div>
@@ -1025,7 +1068,7 @@ function run() { if (files.value) execute({ query: query.value, files: files.val
 
 const SVELTE_DEMO: &str = r##"<script>
   import { onMount, onDestroy } from 'svelte'
-  import { createSpliceQL, compile, check } from '@codonsplice/svelte'
+  import { createSpliceQL, compile, check, ast } from '@codonsplice/svelte'
   import { mountEditor } from './spliceql-editor.js'
   import './splice-demo.css'
 
@@ -1041,42 +1084,48 @@ LIMIT 5`
 
   const { execute, result, error, loading } = createSpliceQL()
   let query = QUERY
+  let view = 'output'
   let bytecode = ''
+  let astText = ''
   let typeError = null
   let files = null
   let host
-  let view
+  let editor
 
   onMount(async () => {
-    view = mountEditor(host, { doc: QUERY, onChange: (v) => { query = v } })
+    editor = mountEditor(host, { doc: QUERY, onChange: (v) => { query = v } })
     try {
       const buf = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
       files = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
       await execute({ query: QUERY, files })
     } catch (e) { /* idle if missing */ }
   })
-  onDestroy(() => { if (view) view.destroy() })
+  onDestroy(() => { if (editor) editor.destroy() })
 
   let timer
   $: schedule(query)
   function schedule(q) {
     clearTimeout(timer)
     timer = setTimeout(async () => {
-      try { const err = await check(q); typeError = err; bytecode = err ? '' : await compile(q) }
-      catch (e) { typeError = String(e); bytecode = '' }
+      typeError = await check(q).catch((e) => String(e))
+      try { bytecode = await compile(q) } catch (e) { bytecode = '' }
+      try { astText = await ast(q) } catch (e) { astText = String(e) }
     }, 180)
   }
   function run() { if (files) execute({ query, files }) }
 
   $: rows = Array.isArray($result) ? $result : []
   $: cols = rows.length ? Object.keys(rows[0]) : []
+  $: paneText = view === 'bytecode' ? (bytecode || '—')
+    : view === 'ast' ? (astText || '—')
+    : ($result != null ? JSON.stringify($result, null, 2) : '—')
 </script>
 
 <div class="app">
   <header class="topbar">
     <span class="logo">CodonSplice</span>
     <span class="divider">│</span>
-    <span class="muted">SpliceQL query engine · Svelte</span>
+    <span class="muted">SpliceQL query engine · Svelte + Vite</span>
     <button class="btn" on:click={run} disabled={$loading || !files || !!typeError}>
       {$loading ? 'Running…' : files ? '▶ Run' : 'Loading BAM…'}
     </button>
@@ -1094,8 +1143,14 @@ LIMIT 5`
 
     <section class="pane">
       <div class="sub-pane">
-        <div class="pane-head"><span class="label">bytecode</span></div>
-        <pre class="scroll term">{bytecode || '—'}</pre>
+        <div class="pane-head">
+          <select class="view-select" bind:value={view}>
+            <option value="output">Output</option>
+            <option value="bytecode">Bytecode</option>
+            <option value="ast">AST</option>
+          </select>
+        </div>
+        <pre class="scroll term">{paneText}</pre>
       </div>
       <div class="sub-pane">
         <div class="pane-head"><span class="label">results{rows.length ? ` · ${rows.length}` : ''}</span></div>
@@ -1126,13 +1181,6 @@ LIMIT 5`
 
 const ASTRO_DEMO: &str = r##"---
 import '../splice-demo.css'
-const query = `FROM bam "NA12878_EGFR.bam"
-WHERE chr = "7"
-  AND depth > 20
-CALL variants
-WITH min_af = 0.05,
-     min_depth = 10
-LIMIT 5`
 ---
 
 <html lang="en">
@@ -1146,7 +1194,7 @@ LIMIT 5`
       <header class="topbar">
         <span class="logo">CodonSplice</span>
         <span class="divider">│</span>
-        <span class="muted">SpliceQL query engine · Astro</span>
+        <span class="muted">SpliceQL query engine · Astro + Vite</span>
         <button id="run" class="btn" disabled>Loading BAM…</button>
       </header>
 
@@ -1161,8 +1209,14 @@ LIMIT 5`
 
         <section class="pane">
           <div class="sub-pane">
-            <div class="pane-head"><span class="label">bytecode</span></div>
-            <pre id="bytecode" class="scroll term">—</pre>
+            <div class="pane-head">
+              <select id="view" class="view-select">
+                <option value="output">Output</option>
+                <option value="bytecode">Bytecode</option>
+                <option value="ast">AST</option>
+              </select>
+            </div>
+            <pre id="pane" class="scroll term">—</pre>
           </div>
           <div class="sub-pane">
             <div class="pane-head"><span class="label" id="resLabel">results</span></div>
@@ -1179,39 +1233,51 @@ LIMIT 5`
     </div>
 
     <script>
-      import { execute, compile, check } from '@codonsplice/astro'
+      import { execute, compile, check, ast } from '@codonsplice/astro'
       import { mountEditor } from '../spliceql-editor.js'
 
       const $ = (id) => document.getElementById(id)
-      const statusEl = $('status'), bytecode = $('bytecode'), runBtn = $('run')
-      const results = $('results'), resLabel = $('resLabel')
-      let query = `FROM bam "NA12878_EGFR.bam"\nWHERE chr = "7"\n  AND depth > 20\nCALL variants\nWITH min_af = 0.05,\n     min_depth = 10\nLIMIT 5`
-      let files = null
+      const statusEl = $('status'), runBtn = $('run'), results = $('results'), resLabel = $('resLabel')
+      const viewSel = $('view'), paneEl = $('pane')
       const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v))
 
+      let query = `FROM bam "NA12878_EGFR.bam"\nWHERE chr = "7"\n  AND depth > 20\nCALL variants\nWITH min_af = 0.05,\n     min_depth = 10\nLIMIT 5`
+      let files = null
+      let bytecode = '', astText = '', lastResult = null
+
       mountEditor($('editor'), { doc: query, onChange: (v) => { query = v; schedule() } })
+
+      function renderPane() {
+        const view = viewSel.value
+        paneEl.textContent = view === 'bytecode' ? (bytecode || '—')
+          : view === 'ast' ? (astText || '—')
+          : (lastResult != null ? JSON.stringify(lastResult, null, 2) : '—')
+      }
+      viewSel.addEventListener('change', renderPane)
 
       let timer
       function schedule() {
         clearTimeout(timer)
         timer = setTimeout(async () => {
-          try {
-            const err = await check(query)
-            statusEl.className = 'status ' + (err ? 'bad' : 'ok')
-            statusEl.innerHTML = '<span class="dot"></span>' + (err ? 'invalid' : 'valid')
-            bytecode.textContent = err ? '—' : await compile(query)
-          } catch (e) { bytecode.textContent = '—' }
+          const err = await check(query).catch((e) => String(e))
+          statusEl.className = 'status ' + (err ? 'bad' : 'ok')
+          statusEl.innerHTML = '<span class="dot"></span>' + (err ? 'invalid' : 'valid')
+          try { bytecode = await compile(query) } catch (e) { bytecode = '' }
+          try { astText = await ast(query) } catch (e) { astText = String(e) }
+          renderPane()
         }, 180)
       }
       schedule()
 
       function render(rows) {
-        if (!Array.isArray(rows) || !rows.length) { results.innerHTML = '<div class="empty">No results.</div>'; resLabel.textContent = 'results'; return }
+        lastResult = rows
+        if (!Array.isArray(rows) || !rows.length) { results.innerHTML = '<div class="empty">No results.</div>'; resLabel.textContent = 'results'; renderPane(); return }
         const cols = Object.keys(rows[0])
         resLabel.textContent = 'results · ' + rows.length
         const th = cols.map((c) => `<th>${c}</th>`).join('')
         const tb = rows.map((r) => '<tr>' + cols.map((c) => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${fmt(r[c])}</td>`).join('') + '</tr>').join('')
         results.innerHTML = `<table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`
+        renderPane()
       }
       async function run() {
         if (!files) return

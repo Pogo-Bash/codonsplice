@@ -135,6 +135,15 @@ impl CodonSplice {
         }
     }
 
+    /// Parse a query and return its AST as a readable tree (for the demo's AST
+    /// view). Errors as the parse error string.
+    pub fn ast(&self, source: &str) -> Result<String, JsValue> {
+        match spliceql::parse(source) {
+            Ok(q) => Ok(pretty_ast(&q)),
+            Err(e) => Err(JsValue::from_str(&format!("{e}"))),
+        }
+    }
+
     /// Execute a query against the JS file map, binding `$variables` from the
     /// `vars` object (`{ name: value }`). Returns the result as a JSON value
     /// (an array of records/rows, or `{ "text": ... }` for header/`INTO`).
@@ -221,5 +230,96 @@ impl CodonSplice {
 impl Default for CodonSplice {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── AST pretty-printer (shared shape with the CLI's TUI AST view) ─────────────
+use spliceql::ast::{BinOp, Expr, Query, UnaryOp};
+
+fn pretty_ast(q: &Query) -> String {
+    let mut s = String::from("Query\n");
+    s.push_str(&format!(
+        "├─ from: {:?} {:?}{}\n",
+        q.from.format,
+        q.from.path,
+        q.from.alias.as_ref().map(|a| format!(" AS {a}")).unwrap_or_default()
+    ));
+    if let Some(sel) = &q.select {
+        s.push_str("├─ select:\n");
+        for item in sel {
+            s.push_str(&format!("│   • {}\n", pretty_expr(&item.expr)));
+            if let Some(a) = &item.alias {
+                s.push_str(&format!("│       AS {a}\n"));
+            }
+        }
+    }
+    if let Some(f) = &q.filter {
+        s.push_str(&format!("├─ where: {}\n", pretty_expr(f)));
+    }
+    if let Some(c) = &q.call {
+        s.push_str(&format!("├─ call: {}\n", c.operation));
+    }
+    if let Some(w) = &q.with {
+        s.push_str("├─ with:\n");
+        for (k, v) in w {
+            s.push_str(&format!("│   {k} = {}\n", pretty_expr(v)));
+        }
+    }
+    if let Some(o) = &q.order {
+        s.push_str("├─ order:\n");
+        for item in o {
+            s.push_str(&format!("│   • {} {:?}\n", pretty_expr(&item.expr), item.direction));
+        }
+    }
+    if let Some(l) = &q.limit {
+        s.push_str(&format!("├─ limit: {}\n", pretty_expr(l)));
+    }
+    if let Some(i) = &q.into {
+        s.push_str(&format!("└─ into: {:?} {:?}\n", i.format, i.path));
+    }
+    s
+}
+
+fn pretty_expr(e: &Expr) -> String {
+    match e {
+        Expr::IntLit(n, _) => n.to_string(),
+        Expr::FloatLit(v, _) => v.to_string(),
+        Expr::StringLit(s, _) => format!("{s:?}"),
+        Expr::BoolLit(b, _) => b.to_string(),
+        Expr::Ident(name, _) => name.clone(),
+        Expr::Var(name, _) => format!("${name}"),
+        Expr::Wildcard(_) => "*".to_string(),
+        Expr::Unary { op, operand, .. } => {
+            let o = match op {
+                UnaryOp::Neg => "-",
+                UnaryOp::Not => "NOT ",
+            };
+            format!("({o}{})", pretty_expr(operand))
+        }
+        Expr::Binary { op, left, right, .. } => {
+            format!("({} {} {})", pretty_expr(left), bin_sym(op), pretty_expr(right))
+        }
+        Expr::FieldAccess { object, field, .. } => format!("{}.{field}", pretty_expr(object)),
+        Expr::Call { callee, args, .. } => {
+            let a: Vec<String> = args.iter().map(pretty_expr).collect();
+            format!("{}({})", pretty_expr(callee), a.join(", "))
+        }
+    }
+}
+
+fn bin_sym(op: &BinOp) -> &'static str {
+    match op {
+        BinOp::And => "AND",
+        BinOp::Or => "OR",
+        BinOp::Eq => "=",
+        BinOp::NotEq => "!=",
+        BinOp::Lt => "<",
+        BinOp::Gt => ">",
+        BinOp::LtEq => "<=",
+        BinOp::GtEq => ">=",
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
     }
 }

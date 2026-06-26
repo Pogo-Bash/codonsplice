@@ -4,7 +4,7 @@ import { execute as csExecute } from '@codonsplice/wasm/helpers'
 
 // Re-export the core tooling so apps can `import { useSpliceQL, compile, check }
 // from '@codonsplice/vue'` without depending on @codonsplice/wasm directly.
-export { execute, stream, compile, check, initEngine } from '@codonsplice/wasm/helpers'
+export { execute, stream, compile, check, ast, initEngine } from '@codonsplice/wasm/helpers'
 
 export function useSpliceQL() {
   const result = ref(null)
