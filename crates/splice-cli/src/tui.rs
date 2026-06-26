@@ -4,7 +4,10 @@
 //! (top-right), and a fixed ARCHITECTURE panel (bottom) that makes the
 //! two-crate design explicit at all times.
 
-use std::io;
+use std::io::{self, BufRead, BufReader};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use codonsplice_core::{compile, disassemble, Vm, VmOutput};
 use ratatui::{
@@ -25,7 +28,7 @@ enum Focus {
     Output,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 enum Tab {
     Editor,
     Build,
@@ -80,7 +83,26 @@ struct App {
     tab: Tab,
     build_target: usize,
     build_release: bool,
+    /// rustup targets installed on this machine (for marking BUILD targets that
+    /// would fail to cross-compile). Empty if rustup isn't available.
+    installed_targets: Vec<String>,
+    /// Async build state: receiver for streamed output, accumulated lines, and
+    /// a spinner frame. `building` is true while a `splice build` runs off-thread
+    /// so the TUI stays responsive (the build used to block the event loop).
+    build_rx: Option<mpsc::Receiver<BuildMsg>>,
+    build_lines: Vec<String>,
+    build_label: String,
+    building: bool,
+    spinner: usize,
 }
+
+/// A line of streamed build output, or a terminal "done" with the exit status.
+enum BuildMsg {
+    Line(String),
+    Done(bool),
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 impl App {
     fn new() -> Self {
@@ -99,6 +121,12 @@ impl App {
             tab: Tab::Editor,
             build_target: 0,
             build_release: true,
+            installed_targets: detect_installed_targets(),
+            build_rx: None,
+            build_lines: Vec::new(),
+            build_label: String::new(),
+            building: false,
+            spinner: 0,
         }
     }
 
@@ -139,10 +167,47 @@ impl App {
         self.scroll = 0;
     }
 
-    /// Build the editor content via a `splice build` subprocess (synchronous;
-    /// captured output is shown on completion).
+    /// The rustup target triple a BUILD_TARGETS entry needs, if any (native host
+    /// needs none). wasm needs `wasm32-unknown-unknown`.
+    fn required_triple(idx: usize) -> Option<&'static str> {
+        let (_, target, wasm) = BUILD_TARGETS[idx];
+        if wasm {
+            Some("wasm32-unknown-unknown")
+        } else {
+            target
+        }
+    }
+
+    /// Whether the target at `idx` can be built here (its rustup target is
+    /// installed). The native host target is always available.
+    fn target_available(&self, idx: usize) -> bool {
+        match Self::required_triple(idx) {
+            None => true,
+            Some(t) => self.installed_targets.iter().any(|s| s == t),
+        }
+    }
+
+    /// Kick off a `splice build` subprocess off-thread, streaming its output
+    /// into the OUTPUT pane so the TUI stays responsive (a spinner animates while
+    /// it runs). No-op if a build is already in flight. Uninstalled cross-targets
+    /// show an install hint instead of a long, failing build.
     fn run_build(&mut self) {
+        if self.building {
+            return; // a build is already running
+        }
         let (label, target, wasm) = BUILD_TARGETS[self.build_target];
+
+        // Guard: don't spawn a cross-compile that's doomed for a missing target.
+        if !self.target_available(self.build_target) {
+            let triple = Self::required_triple(self.build_target).unwrap_or("");
+            self.output = OutputPane::from_text(
+                "OUTPUT · build",
+                &format!(
+                    "target `{label}` is not installed.\n\nAdd it with:\n  rustup target add {triple}\n\nThen rebuild (Ctrl+Enter)."
+                ),
+            );
+            return;
+        }
         let name = self.build_output_name();
 
         // Write the editor content to a temp .spq.
@@ -159,48 +224,86 @@ impl App {
             }
         };
 
-        let mut cmd = std::process::Command::new(exe);
-        cmd.arg("build").arg(&tmp).arg("-o").arg(&name);
+        let mut args: Vec<String> = vec![
+            "build".into(),
+            tmp.to_string_lossy().into_owned(),
+            "-o".into(),
+            name,
+            "--no-update".into(),
+        ];
         if self.build_release {
-            cmd.arg("--release");
+            args.push("--release".into());
         }
         if wasm {
-            cmd.arg("--wasm");
+            args.push("--wasm".into());
         } else if let Some(t) = target {
-            cmd.arg("--target").arg(t);
+            args.push("--target".into());
+            args.push(t.to_string());
         }
 
-        let out = cmd.output();
-        let _ = std::fs::remove_file(&tmp);
-        let mut text = format!("$ splice build (target: {label})\n\n");
-        match out {
-            Ok(o) => {
-                text.push_str(&String::from_utf8_lossy(&o.stdout));
-                text.push_str(&String::from_utf8_lossy(&o.stderr));
-                if !o.status.success() {
-                    text.push_str("\n✗ build failed");
+        self.building = true;
+        self.build_label = label.to_string();
+        self.build_lines = vec![format!("$ splice build (target: {label})"), String::new()];
+        self.scroll = 0;
+        self.refresh_build_output();
+
+        let (tx, rx) = mpsc::channel::<BuildMsg>();
+        self.build_rx = Some(rx);
+        thread::spawn(move || {
+            let ok = run_streamed_build(&exe, &args, &tx);
+            let _ = std::fs::remove_file(&tmp);
+            let _ = tx.send(BuildMsg::Done(ok));
+        });
+    }
+
+    /// Drain streamed build output and advance the spinner. Called every tick.
+    fn tick(&mut self) {
+        if !self.building {
+            return;
+        }
+        self.spinner = (self.spinner + 1) % SPINNER.len();
+        let mut finished = None;
+        if let Some(rx) = &self.build_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    BuildMsg::Line(l) => self.build_lines.push(l),
+                    BuildMsg::Done(ok) => finished = Some(ok),
                 }
             }
-            Err(e) => text.push_str(&format!("error: {e}")),
         }
-        let lines = text
-            .lines()
-            .map(|l| {
-                let style = if l.contains('✗') || l.to_lowercase().contains("error") {
-                    Style::new().fg(Color::Rgb(243, 139, 168))
-                } else if l.starts_with('✓') {
-                    Style::new().fg(Color::Rgb(166, 227, 161))
-                } else {
-                    Style::new().fg(Color::Gray)
-                };
-                Line::from(Span::styled(l.to_string(), style))
-            })
-            .collect();
+        if let Some(ok) = finished {
+            self.building = false;
+            self.build_rx = None;
+            self.build_lines
+                .push(if ok { "✓ build complete".into() } else { "✗ build failed".into() });
+        }
+        self.refresh_build_output();
+    }
+
+    /// Rebuild the OUTPUT pane from the accumulated build lines, prefixing a
+    /// spinner status line while the build is running.
+    fn refresh_build_output(&mut self) {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if self.building {
+            lines.push(Line::from(Span::styled(
+                format!("{} building ({})…", SPINNER[self.spinner], self.build_label),
+                Style::new().fg(Color::Rgb(250, 179, 135)),
+            )));
+        }
+        for l in &self.build_lines {
+            let style = if l.contains('✗') || l.to_lowercase().contains("error") {
+                Style::new().fg(Color::Rgb(243, 139, 168))
+            } else if l.starts_with('✓') {
+                Style::new().fg(Color::Rgb(166, 227, 161))
+            } else {
+                Style::new().fg(Color::Gray)
+            };
+            lines.push(Line::from(Span::styled(l.clone(), style)));
+        }
         self.output = OutputPane {
             title: "OUTPUT · build".into(),
             lines,
         };
-        self.scroll = 0;
     }
 
     /// The output binary name: @name directive, else "query".
@@ -489,12 +592,19 @@ impl App {
         ];
         for (i, (label, _, _)) in BUILD_TARGETS.iter().enumerate() {
             let marker = if i == self.build_target { "●" } else { "○" };
-            let style = if i == self.build_target {
-                Style::new().fg(Color::Rgb(166, 227, 161)).bold()
-            } else {
-                Style::new().fg(Color::Gray)
+            let available = self.target_available(i);
+            let selected = i == self.build_target;
+            let style = match (selected, available) {
+                (true, true) => Style::new().fg(Color::Rgb(166, 227, 161)).bold(),
+                (true, false) => Style::new().fg(Color::Rgb(243, 139, 168)).bold(),
+                (false, true) => Style::new().fg(Color::Gray),
+                (false, false) => Style::new().fg(Color::DarkGray),
             };
-            lines.push(Line::from(Span::styled(format!("  {marker} {label}"), style)));
+            let suffix = if available { "" } else { "  (not installed)" };
+            lines.push(Line::from(Span::styled(
+                format!("  {marker} {label}{suffix}"),
+                style,
+            )));
         }
         lines.push(Line::from(""));
         let mode = if self.build_release { "● release   ○ debug" } else { "○ release   ● debug" };
@@ -727,11 +837,193 @@ fn run_loop(terminal: &mut DefaultTerminal) -> io::Result<()> {
     let mut app = App::new();
     while !app.quit {
         terminal.draw(|frame| app.draw(frame))?;
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                app.on_key(key);
+        // Poll (don't block) so streamed build output + the spinner keep
+        // animating while a build runs off-thread.
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    app.on_key(key);
+                }
             }
         }
+        app.tick();
     }
     Ok(())
+}
+
+/// The rustup targets installed on this machine (`rustup target list
+/// --installed`), one triple per line. Empty if rustup isn't available.
+fn detect_installed_targets() -> Vec<String> {
+    std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Run `exe build …`, forwarding merged stdout/stderr lines to `tx`. Returns
+/// whether the build exited successfully.
+fn run_streamed_build(exe: &std::path::Path, args: &[String], tx: &mpsc::Sender<BuildMsg>) -> bool {
+    use std::process::{Command, Stdio};
+    let mut child = match Command::new(exe)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(BuildMsg::Line(format!("error: {e}")));
+            return false;
+        }
+    };
+
+    let mut handles = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        let tx = tx.clone();
+        handles.push(thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                let _ = tx.send(BuildMsg::Line(line));
+            }
+        }));
+    }
+    if let Some(err) = child.stderr.take() {
+        let tx = tx.clone();
+        handles.push(thread::spawn(move || {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                let _ = tx.send(BuildMsg::Line(line));
+            }
+        }));
+    }
+    let status = child.wait();
+    for h in handles {
+        let _ = h.join();
+    }
+    matches!(status, Ok(s) if s.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn build_tab_arrows_change_target() {
+        let mut app = App::new();
+        app.on_key(ctrl(KeyCode::Char('b'))); // enter BUILD tab
+        assert_eq!(app.tab, Tab::Build);
+        assert_eq!(app.build_target, 0);
+
+        app.on_key(press(KeyCode::Down));
+        app.on_key(press(KeyCode::Down));
+        assert_eq!(app.build_target, 2, "Down should advance the target");
+
+        app.on_key(press(KeyCode::Up));
+        assert_eq!(app.build_target, 1, "Up should go back");
+
+        // Clamps at both ends.
+        for _ in 0..20 {
+            app.on_key(press(KeyCode::Down));
+        }
+        assert_eq!(app.build_target, BUILD_TARGETS.len() - 1);
+        for _ in 0..20 {
+            app.on_key(press(KeyCode::Up));
+        }
+        assert_eq!(app.build_target, 0);
+    }
+
+    #[test]
+    fn build_tab_space_toggles_release() {
+        let mut app = App::new();
+        app.on_key(ctrl(KeyCode::Char('b')));
+        let before = app.build_release;
+        app.on_key(press(KeyCode::Char(' ')));
+        assert_eq!(app.build_release, !before);
+    }
+
+    #[test]
+    fn tick_streams_build_output_and_finishes() {
+        let mut app = App::new();
+        let (tx, rx) = mpsc::channel();
+        app.building = true;
+        app.build_rx = Some(rx);
+        app.build_label = "native (host)".into();
+
+        tx.send(BuildMsg::Line("Compiling foo".into())).unwrap();
+        app.tick();
+        assert!(app.building, "still building until Done arrives");
+        assert!(app.build_lines.iter().any(|l| l.contains("Compiling foo")));
+
+        tx.send(BuildMsg::Done(true)).unwrap();
+        app.tick();
+        assert!(!app.building, "Done flips building off");
+        assert!(app.build_rx.is_none());
+        assert!(app.build_lines.iter().any(|l| l.starts_with('✓')));
+    }
+
+    #[test]
+    fn run_build_is_noop_while_building() {
+        let mut app = App::new();
+        app.building = true;
+        app.build_lines = vec!["existing".into()];
+        app.run_build(); // must not start a second build
+        assert_eq!(app.build_lines, vec!["existing".to_string()]);
+    }
+
+    #[test]
+    fn native_target_always_available() {
+        let mut app = App::new();
+        app.installed_targets = vec![]; // nothing installed
+        assert_eq!(BUILD_TARGETS[0].0, "native (host)");
+        assert!(app.target_available(0), "native host needs no rustup target");
+    }
+
+    #[test]
+    fn cross_target_guarded_when_not_installed() {
+        let mut app = App::new();
+        app.installed_targets = vec!["x86_64-unknown-linux-gnu".into()];
+        // Find the windows cross target (has a triple, not installed here).
+        let win = BUILD_TARGETS
+            .iter()
+            .position(|(_, t, _)| *t == Some("x86_64-pc-windows-msvc"))
+            .unwrap();
+        assert!(!app.target_available(win));
+
+        app.tab = Tab::Build;
+        app.build_target = win;
+        app.run_build();
+        assert!(!app.building, "an unavailable target must not start a build");
+        let text: String = app
+            .output
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(text.contains("rustup target add"), "should show an install hint: {text}");
+    }
+
+    #[test]
+    fn installed_cross_target_is_available() {
+        let mut app = App::new();
+        app.installed_targets = vec!["x86_64-pc-windows-msvc".into()];
+        let win = BUILD_TARGETS
+            .iter()
+            .position(|(_, t, _)| *t == Some("x86_64-pc-windows-msvc"))
+            .unwrap();
+        assert!(app.target_available(win));
+    }
 }

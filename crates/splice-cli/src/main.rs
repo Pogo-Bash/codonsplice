@@ -8,6 +8,7 @@
 //! ```
 
 mod build;
+mod create;
 mod directive;
 mod installer;
 mod spq;
@@ -39,6 +40,13 @@ enum Command {
     Compile { source: String },
     /// Parse and type-check a query without executing it.
     Check { source: String },
+    /// Scaffold a new front-end project (react/vue/svelte/astro) wired to splice.
+    Create {
+        /// Framework: react | vue | svelte | astro.
+        framework: String,
+        /// Project directory name (default: splice-app).
+        name: Option<String>,
+    },
     /// Launch the guided TUI installer (detect environment + install).
     Install,
     /// Check for and install the latest release of splice.
@@ -86,12 +94,13 @@ fn main() -> std::process::ExitCode {
 
     let cli = Cli::parse();
 
-    // Auto-check for updates before normal commands. Skipped for the
-    // update/uninstall/install flows (which manage versions themselves) and for
-    // the bare TUI (it shows the latest release in its own UI).
+    // Auto-check for updates before normal commands (including the bare TUI):
+    // check, prompt y/N if a newer release exists, then proceed to the command.
+    // Skipped only for the update/uninstall/install flows, which manage versions
+    // themselves.
     if !matches!(
         cli.command,
-        None | Some(Command::Update) | Some(Command::Uninstall) | Some(Command::Install)
+        Some(Command::Update) | Some(Command::Uninstall) | Some(Command::Install)
     ) {
         update::auto_check(cli.no_update);
     }
@@ -107,6 +116,7 @@ fn main() -> std::process::ExitCode {
         Some(Command::Query { source }) => cmd_query(&source),
         Some(Command::Compile { source }) => cmd_compile(&source),
         Some(Command::Check { source }) => cmd_check(&source),
+        Some(Command::Create { framework, name }) => create::cmd_create(&framework, name),
         Some(Command::Install) => match installer::run() {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(e) => {
