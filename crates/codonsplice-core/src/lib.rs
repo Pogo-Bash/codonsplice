@@ -30,8 +30,8 @@ pub mod runtime;
 pub mod vm;
 
 pub use compiler::{
-    did_you_mean, disassemble, extract_region, levenshtein, param_names_for, suggest_param,
-    CompileError, Compiler, DebugInfo, OpCode, Program, Value,
+    did_you_mean, disassemble, extract_region, is_builtin, levenshtein, param_names_for,
+    suggest_function, suggest_param, CompileError, Compiler, DebugInfo, OpCode, Program, Value,
 };
 pub use bytecode::BytecodeError;
 pub use materialize::{materialize, materialize_streaming};

@@ -377,6 +377,28 @@ pub enum CompileError {
     MultipleFrom {
         span: Span,
     },
+    /// A call to a function the VM has no builtin for.
+    UnknownFunction {
+        name: String,
+        span: Span,
+    },
+    /// A builtin called with the wrong number of arguments. `expected` is a
+    /// human description ("1", "1 or 2", "at least 1").
+    FunctionArity {
+        name: String,
+        expected: String,
+        got: usize,
+        span: Span,
+    },
+    /// A builtin argument that must be a string was given a different type that
+    /// is knowable at compile time (a literal or arithmetic/boolean expression).
+    FunctionArgType {
+        name: String,
+        arg: usize,
+        expected: &'static str,
+        got: &'static str,
+        span: Span,
+    },
     ParseError(ParseError),
 }
 
@@ -395,6 +417,9 @@ impl CompileError {
             CompileError::NonConstantParam { .. } => "E003",
             CompileError::ParamWithoutCall { .. } => "E004",
             CompileError::MultipleFrom { .. } => "E005",
+            CompileError::UnknownFunction { .. } => "E006",
+            CompileError::FunctionArity { .. } => "E007",
+            CompileError::FunctionArgType { .. } => "E008",
             CompileError::ParseError(_) => "E000",
         }
     }
@@ -406,7 +431,10 @@ impl CompileError {
             | CompileError::ParamTypeMismatch { span, .. }
             | CompileError::NonConstantParam { span }
             | CompileError::ParamWithoutCall { span }
-            | CompileError::MultipleFrom { span } => *span,
+            | CompileError::MultipleFrom { span }
+            | CompileError::UnknownFunction { span, .. }
+            | CompileError::FunctionArity { span, .. }
+            | CompileError::FunctionArgType { span, .. } => *span,
             CompileError::ParseError(e) => e.span(),
         }
     }
@@ -430,6 +458,19 @@ impl CompileError {
                 "WITH clause has no CALL to configure".to_string()
             }
             CompileError::MultipleFrom { .. } => "only one FROM clause is allowed".to_string(),
+            CompileError::UnknownFunction { name, .. } => {
+                format!("unknown function {name:?}")
+            }
+            CompileError::FunctionArity {
+                name, expected, got, ..
+            } => format!("function {name:?} takes {expected} argument(s), got {got}"),
+            CompileError::FunctionArgType {
+                name,
+                arg,
+                expected,
+                got,
+                ..
+            } => format!("function {name:?} argument {arg} must be a {expected}, got {got}"),
             CompileError::ParseError(e) => e.to_string(),
         }
     }
@@ -562,6 +603,154 @@ pub fn param_names_for(operation: &str) -> Vec<&'static str> {
 pub fn suggest_param(unknown: &str, operation: &str) -> Option<String> {
     let candidates = param_names_for(operation);
     did_you_mean(unknown, &candidates)
+}
+
+// ── builtin function signatures (compile-time validation) ────────────────────
+//
+// These describe the functions the VM's `call_builtin` (vm.rs) implements, so
+// `splice check` can reject unknown names, wrong arity, and obvious argument
+// type errors before the VM ever runs. Keep this table in sync with vm.rs.
+
+/// A builtin's static signature: argument count bounds and which argument
+/// positions must be strings.
+struct BuiltinSig {
+    name: &'static str,
+    /// Minimum argument count.
+    min: usize,
+    /// Maximum argument count, or `None` for variadic.
+    max: Option<usize>,
+    /// Argument positions (0-based) that must be strings.
+    str_args: &'static [usize],
+}
+
+impl BuiltinSig {
+    /// Human-readable arity, e.g. "1", "1 or 2", "2 or 3", "at least 1".
+    fn arity_desc(&self) -> String {
+        match self.max {
+            Some(mx) if mx == self.min => format!("{}", self.min),
+            Some(mx) if mx == self.min + 1 => format!("{} or {}", self.min, mx),
+            Some(mx) => format!("{} to {}", self.min, mx),
+            None => format!("at least {}", self.min),
+        }
+    }
+}
+
+const BUILTINS: &[BuiltinSig] = &[
+    // scalar / math
+    BuiltinSig { name: "abs", min: 1, max: Some(1), str_args: &[] },
+    BuiltinSig { name: "floor", min: 1, max: Some(1), str_args: &[] },
+    BuiltinSig { name: "ceil", min: 1, max: Some(1), str_args: &[] },
+    BuiltinSig { name: "sqrt", min: 1, max: Some(1), str_args: &[] },
+    BuiltinSig { name: "round", min: 1, max: Some(2), str_args: &[] },
+    BuiltinSig { name: "log", min: 1, max: Some(2), str_args: &[] },
+    BuiltinSig { name: "pow", min: 2, max: Some(2), str_args: &[] },
+    BuiltinSig { name: "min", min: 1, max: None, str_args: &[] },
+    BuiltinSig { name: "max", min: 1, max: None, str_args: &[] },
+    BuiltinSig { name: "coalesce", min: 1, max: None, str_args: &[] },
+    // string
+    BuiltinSig { name: "len", min: 1, max: Some(1), str_args: &[0] },
+    BuiltinSig { name: "upper", min: 1, max: Some(1), str_args: &[0] },
+    BuiltinSig { name: "lower", min: 1, max: Some(1), str_args: &[0] },
+    BuiltinSig { name: "concat", min: 1, max: None, str_args: &[] },
+    BuiltinSig { name: "contains", min: 2, max: Some(2), str_args: &[0, 1] },
+    BuiltinSig { name: "starts_with", min: 2, max: Some(2), str_args: &[0, 1] },
+    BuiltinSig { name: "ends_with", min: 2, max: Some(2), str_args: &[0, 1] },
+    BuiltinSig { name: "substr", min: 2, max: Some(3), str_args: &[0] },
+    // genomic
+    BuiltinSig { name: "gc", min: 1, max: Some(1), str_args: &[0] },
+    BuiltinSig { name: "revcomp", min: 1, max: Some(1), str_args: &[0] },
+    BuiltinSig { name: "translate", min: 1, max: Some(2), str_args: &[0] },
+    BuiltinSig { name: "codon_at", min: 2, max: Some(2), str_args: &[0] },
+];
+
+fn builtin_sig(name: &str) -> Option<&'static BuiltinSig> {
+    BUILTINS.iter().find(|b| b.name == name)
+}
+
+/// True if `name` is a known builtin function (used to disambiguate a
+/// one-string-arg call from a `name["key"]` subscript).
+pub fn is_builtin(name: &str) -> bool {
+    builtin_sig(name).is_some()
+}
+
+/// Suggest the closest known builtin name to `unknown` (the E006 "did you mean").
+pub fn suggest_function(unknown: &str) -> Option<String> {
+    let names: Vec<&str> = BUILTINS.iter().map(|b| b.name).collect();
+    did_you_mean(unknown, &names)
+}
+
+/// A statically-knowable value type, for the conservative argument-type check.
+#[derive(PartialEq, Clone, Copy)]
+enum StaticType {
+    Str,
+    Num,
+    Bool,
+}
+
+impl StaticType {
+    fn name(self) -> &'static str {
+        match self {
+            StaticType::Str => "string",
+            StaticType::Num => "number",
+            StaticType::Bool => "bool",
+        }
+    }
+}
+
+/// The type of an expression when it is knowable at compile time. Returns `None`
+/// for fields, `$vars`, subscripts, and function calls (runtime-dependent), so
+/// the type check never produces a false positive on e.g. `gc(ref)`.
+fn static_type(e: &Expr) -> Option<StaticType> {
+    match e {
+        Expr::StringLit(..) => Some(StaticType::Str),
+        Expr::IntLit(..) | Expr::FloatLit(..) => Some(StaticType::Num),
+        Expr::BoolLit(..) => Some(StaticType::Bool),
+        Expr::Unary { op: UnaryOp::Neg, .. } => Some(StaticType::Num),
+        Expr::Unary { op: UnaryOp::Not, .. } => Some(StaticType::Bool),
+        Expr::Binary { op, .. } => match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => Some(StaticType::Num),
+            _ => Some(StaticType::Bool), // comparisons + AND/OR
+        },
+        _ => None, // Ident, Var, FieldAccess, Call, Wildcard
+    }
+}
+
+/// Validate a builtin call's name, arity, and (conservatively) argument types.
+fn validate_builtin_call(name: &str, args: &[Expr], span: Span) -> Result<(), CompileError> {
+    let sig = match builtin_sig(name) {
+        Some(s) => s,
+        None => {
+            return Err(CompileError::UnknownFunction {
+                name: name.to_string(),
+                span,
+            })
+        }
+    };
+    let n = args.len();
+    if n < sig.min || sig.max.map_or(false, |mx| n > mx) {
+        return Err(CompileError::FunctionArity {
+            name: name.to_string(),
+            expected: sig.arity_desc(),
+            got: n,
+            span,
+        });
+    }
+    for &pos in sig.str_args {
+        if let Some(arg) = args.get(pos) {
+            if let Some(t) = static_type(arg) {
+                if t != StaticType::Str {
+                    return Err(CompileError::FunctionArgType {
+                        name: name.to_string(),
+                        arg: pos + 1,
+                        expected: "string",
+                        got: t.name(),
+                        span: arg.span(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Pick the best "did you mean" candidate for `unknown`.
@@ -1042,14 +1231,25 @@ impl Compiler {
         args: &[Expr],
         span: Span,
     ) -> Result<(), CompileError> {
+        // `name["key"]` is a subscript — UNLESS the name is a known builtin, in
+        // which case `gc("ACGT")` is a real one-string-arg function call.
         let is_subscript = args.len() == 1
-            && matches!(callee, Expr::Ident(..) | Expr::FieldAccess { .. })
-            && matches!(args[0], Expr::StringLit(..));
+            && matches!(args[0], Expr::StringLit(..))
+            && match callee {
+                Expr::Ident(n, _) => !is_builtin(n),
+                Expr::FieldAccess { .. } => true,
+                _ => false,
+            };
         if is_subscript {
             self.compile_expr(callee)?;
             self.compile_expr(&args[0])?;
             self.emit(OpCode::Index, span);
             return Ok(());
+        }
+
+        // Real function call: validate name/arity/arg-types before lowering.
+        if let Expr::Ident(n, _) = callee {
+            validate_builtin_call(n, args, span)?;
         }
 
         for arg in args {
@@ -1363,5 +1563,92 @@ fn disasm_one(
         OpCode::SetParam => format!("{:<13}{}", op.name(), konst(read_u16(pc))),
         // No-operand opcodes.
         _ => op.name().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod builtin_validation_tests {
+    use super::*;
+
+    fn err(q: &str) -> CompileError {
+        crate::compile(q).unwrap_err()
+    }
+
+    #[test]
+    fn unknown_function_suggests() {
+        let e = err(r#"FROM bam "x" WHERE abz(depth) > 0 CALL variants"#);
+        assert!(matches!(e, CompileError::UnknownFunction { .. }), "{e:?}");
+        // The CLI computes the hint via suggest_function.
+        assert_eq!(suggest_function("abz").as_deref(), Some("abs"));
+        assert_eq!(suggest_function("revcom").as_deref(), Some("revcomp"));
+    }
+
+    #[test]
+    fn wrong_arity() {
+        match err(r#"FROM bam "x" WHERE abs(depth, 2) > 0 CALL variants"#) {
+            CompileError::FunctionArity {
+                name,
+                expected,
+                got,
+                ..
+            } => {
+                assert_eq!(name, "abs");
+                assert_eq!(expected, "1");
+                assert_eq!(got, 2);
+            }
+            other => panic!("expected FunctionArity, got {other:?}"),
+        }
+        // variadic: min(1, ..) needs at least 1.
+        assert!(matches!(
+            err(r#"FROM bam "x" WHERE min() > 0 CALL variants"#),
+            CompileError::FunctionArity { .. }
+        ));
+    }
+
+    #[test]
+    fn genomic_arg_type_mismatch() {
+        match err(r#"FROM bam "x" WHERE gc(5) > 0.5 CALL variants"#) {
+            CompileError::FunctionArgType {
+                name,
+                arg,
+                expected,
+                got,
+                ..
+            } => {
+                assert_eq!(name, "gc");
+                assert_eq!(arg, 1);
+                assert_eq!(expected, "string");
+                assert_eq!(got, "number");
+            }
+            other => panic!("expected FunctionArgType, got {other:?}"),
+        }
+        // arithmetic expr is statically numeric → also caught.
+        assert!(matches!(
+            err(r#"FROM bam "x" WHERE revcomp(1 + 2) = "x" CALL variants"#),
+            CompileError::FunctionArgType { .. }
+        ));
+    }
+
+    #[test]
+    fn valid_calls_compile() {
+        // Field/var args have unknown static type → never flagged (no false
+        // positive on the common gc(ref) case).
+        assert!(crate::compile(r#"FROM bam "x" WHERE gc(ref) > 0.5 CALL variants"#).is_ok());
+        // A string-literal arg to a builtin is a CALL, not an info["DP"] subscript.
+        assert!(
+            crate::compile(r#"FROM bam "x" WHERE translate("ATGAAATAG") = "MK*" CALL variants"#)
+                .is_ok()
+        );
+        assert!(crate::compile(r#"FROM bam "x" WHERE abs(depth) > 0 CALL variants"#).is_ok());
+        assert!(
+            crate::compile(r#"FROM bam "x" WHERE concat(chr, ":", pos) = "7:1" CALL variants"#)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn subscript_still_works() {
+        // `info` is not a builtin, so info["DP"] stays a subscript and compiles.
+        assert!(crate::compile(r#"FROM vcf "x" WHERE info["DP"] > 10 CALL variants"#).is_ok());
     }
 }
