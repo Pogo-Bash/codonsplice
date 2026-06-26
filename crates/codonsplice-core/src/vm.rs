@@ -111,6 +111,9 @@ pub enum VmError {
     UnboundVariable { name: String, pc: usize },
     /// A still-stubbed opcode (kept for any remaining unwired paths).
     NotYetImplemented(String),
+    /// A builtin function call failed: unknown name, wrong arity, or a
+    /// badly-typed argument. Carries a ready-to-print message.
+    Builtin(String),
 }
 
 impl VmError {
@@ -140,6 +143,7 @@ impl std::fmt::Display for VmError {
                 write!(f, "unbound variable ${name} at pc {pc}")
             }
             VmError::NotYetImplemented(op) => write!(f, "opcode {op} is not implemented"),
+            VmError::Builtin(m) => write!(f, "{m}"),
         }
     }
 }
@@ -853,7 +857,18 @@ impl Vm {
                 self.pc = target;
             }
             OpCode::CallFn => {
-                return Err(VmError::NotYetImplemented(op.name().to_string()))
+                let name_idx = self.read_u16();
+                let argc = self.read_u8() as usize;
+                let name = self.const_str(name_idx);
+                // Args were compiled left-to-right, so the last argument sits on
+                // top of the stack. Pop them and flip back into call order.
+                let mut args = Vec::with_capacity(argc);
+                for _ in 0..argc {
+                    args.push(self.pop(pc0)?);
+                }
+                args.reverse();
+                let v = call_builtin(name.as_ref(), &args, pc0)?;
+                self.stack.push(v);
             }
             other => return Err(VmError::NotYetImplemented(other.name().to_string())),
         }
@@ -1390,4 +1405,346 @@ fn compare(
         _ => unreachable!(),
     };
     Ok(Bool(r))
+}
+
+// ── builtin functions (CALL_FN) ──────────────────────────────────────────────
+//
+// SpliceQL function calls (`abs(x)`, `gc(seq)`, …) compile to a `CALL_FN`
+// opcode; the VM pops the args (in call order) and dispatches here. Three
+// families: scalar/math, string, and genomic. Unknown names, wrong arity, or
+// mistyped arguments return a `VmError::Builtin` carrying a printable message.
+
+/// Stringify a value for `concat()` (Null → empty string).
+fn display_value(v: &RuntimeValue) -> String {
+    match v {
+        RuntimeValue::Int(n) => n.to_string(),
+        RuntimeValue::Float(x) => x.to_string(),
+        RuntimeValue::Str(s) => s.to_string(),
+        RuntimeValue::Bool(b) => b.to_string(),
+        RuntimeValue::Null => String::new(),
+        other => other.type_name().to_string(),
+    }
+}
+
+/// Fraction of G/C among A/C/G/T bases (other symbols ignored); 0.0 if none.
+fn gc_fraction(seq: &str) -> f64 {
+    let (mut gc, mut at) = (0u64, 0u64);
+    for b in seq.bytes() {
+        match b.to_ascii_uppercase() {
+            b'G' | b'C' => gc += 1,
+            b'A' | b'T' => at += 1,
+            _ => {}
+        }
+    }
+    let denom = gc + at;
+    if denom == 0 {
+        0.0
+    } else {
+        gc as f64 / denom as f64
+    }
+}
+
+/// Reverse complement of a DNA string (uppercased; N and unknowns pass through).
+fn revcomp(seq: &str) -> String {
+    seq.chars()
+        .rev()
+        .map(|c| match c.to_ascii_uppercase() {
+            'A' => 'T',
+            'T' | 'U' => 'A',
+            'C' => 'G',
+            'G' => 'C',
+            other => other,
+        })
+        .collect()
+}
+
+/// Map a base to its index in T,C,A,G order (the layout of the codon table).
+fn base_idx(b: u8) -> Option<usize> {
+    match b.to_ascii_uppercase() {
+        b'T' | b'U' => Some(0),
+        b'C' => Some(1),
+        b'A' => Some(2),
+        b'G' => Some(3),
+        _ => None,
+    }
+}
+
+/// Single-letter amino acid for a DNA codon (NCBI table 1). `*` = stop, `X` =
+/// codon containing a non-ACGT base.
+fn codon_aa(c: &[u8]) -> char {
+    // Amino acids indexed by base1*16 + base2*4 + base3, each base in T,C,A,G order.
+    const AAS: &[u8] = b"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG";
+    match (base_idx(c[0]), base_idx(c[1]), base_idx(c[2])) {
+        (Some(a), Some(b), Some(d)) => AAS[a * 16 + b * 4 + d] as char,
+        _ => 'X',
+    }
+}
+
+/// Translate DNA to a single-letter amino-acid string from `frame` (0/1/2); a
+/// trailing partial codon is dropped.
+fn translate_dna(seq: &str, frame: usize) -> String {
+    let bases: Vec<u8> = seq.bytes().collect();
+    let mut aa = String::new();
+    let mut i = frame;
+    while i + 3 <= bases.len() {
+        aa.push(codon_aa(&bases[i..i + 3]));
+        i += 3;
+    }
+    aa
+}
+
+/// Dispatch a builtin by name. `args` are in call order; `_pc` is kept for
+/// parity with the other VM helpers and future span-aware errors.
+fn call_builtin(name: &str, args: &[RuntimeValue], _pc: usize) -> Result<RuntimeValue, VmError> {
+    use RuntimeValue::*;
+    let bad = |m: String| VmError::Builtin(m);
+    let arity = |n: usize| -> Result<(), VmError> {
+        if args.len() == n {
+            Ok(())
+        } else {
+            Err(VmError::Builtin(format!(
+                "{name}() takes {n} argument(s), got {}",
+                args.len()
+            )))
+        }
+    };
+    // Numeric argument (coerces ints/floats/numeric strings), else a type error.
+    let num = |i: usize| -> Result<f64, VmError> {
+        as_f64(&args[i]).ok_or_else(|| {
+            VmError::Builtin(format!(
+                "{name}(): argument {} must be a number, got {}",
+                i + 1,
+                args[i].type_name()
+            ))
+        })
+    };
+    // String argument (must be an actual string).
+    let text = |i: usize| -> Result<std::sync::Arc<str>, VmError> {
+        match &args[i] {
+            Str(s) => Ok(s.clone()),
+            other => Err(VmError::Builtin(format!(
+                "{name}(): argument {} must be a string, got {}",
+                i + 1,
+                other.type_name()
+            ))),
+        }
+    };
+
+    match name {
+        // ── scalar / math ────────────────────────────────────────────────
+        "abs" => {
+            arity(1)?;
+            Ok(match &args[0] {
+                Int(n) => Int(n.abs()),
+                Float(x) => Float(x.abs()),
+                other => {
+                    return Err(bad(format!(
+                        "abs(): argument must be a number, got {}",
+                        other.type_name()
+                    )))
+                }
+            })
+        }
+        "floor" => {
+            arity(1)?;
+            Ok(Int(num(0)?.floor() as i64))
+        }
+        "ceil" => {
+            arity(1)?;
+            Ok(Int(num(0)?.ceil() as i64))
+        }
+        "sqrt" => {
+            arity(1)?;
+            Ok(Float(num(0)?.sqrt()))
+        }
+        "pow" => {
+            arity(2)?;
+            Ok(Float(num(0)?.powf(num(1)?)))
+        }
+        "round" => match args.len() {
+            1 => Ok(Int(num(0)?.round() as i64)),
+            2 => {
+                let p = as_i64(&args[1]).unwrap_or(0).max(0) as i32;
+                let f = 10f64.powi(p);
+                Ok(Float((num(0)? * f).round() / f))
+            }
+            n => Err(bad(format!("round() takes 1 or 2 arguments, got {n}"))),
+        },
+        "log" => match args.len() {
+            1 => Ok(Float(num(0)?.ln())),
+            2 => Ok(Float(num(0)?.log(num(1)?))),
+            n => Err(bad(format!("log() takes 1 or 2 arguments, got {n}"))),
+        },
+        "min" | "max" => {
+            if args.is_empty() {
+                return Err(bad(format!("{name}() needs at least 1 argument")));
+            }
+            let want_min = name == "min";
+            if args.iter().all(|a| matches!(a, Int(_))) {
+                let mut acc = as_i64(&args[0]).unwrap();
+                for a in &args[1..] {
+                    let v = as_i64(a).unwrap();
+                    acc = if want_min { acc.min(v) } else { acc.max(v) };
+                }
+                Ok(Int(acc))
+            } else {
+                let mut acc = num(0)?;
+                for i in 1..args.len() {
+                    let v = num(i)?;
+                    acc = if want_min { acc.min(v) } else { acc.max(v) };
+                }
+                Ok(Float(acc))
+            }
+        }
+        "coalesce" => {
+            for a in args {
+                if !matches!(a, Null) {
+                    return Ok(a.clone());
+                }
+            }
+            Ok(Null)
+        }
+        // ── string ───────────────────────────────────────────────────────
+        "len" => {
+            arity(1)?;
+            Ok(Int(text(0)?.chars().count() as i64))
+        }
+        "upper" => {
+            arity(1)?;
+            Ok(Str(std::sync::Arc::from(text(0)?.to_uppercase())))
+        }
+        "lower" => {
+            arity(1)?;
+            Ok(Str(std::sync::Arc::from(text(0)?.to_lowercase())))
+        }
+        "concat" => {
+            let mut s = String::new();
+            for a in args {
+                s.push_str(&display_value(a));
+            }
+            Ok(Str(std::sync::Arc::from(s)))
+        }
+        "contains" => {
+            arity(2)?;
+            Ok(Bool(text(0)?.contains(&*text(1)?)))
+        }
+        "starts_with" => {
+            arity(2)?;
+            Ok(Bool(text(0)?.starts_with(&*text(1)?)))
+        }
+        "ends_with" => {
+            arity(2)?;
+            Ok(Bool(text(0)?.ends_with(&*text(1)?)))
+        }
+        "substr" => {
+            if args.len() != 2 && args.len() != 3 {
+                return Err(bad(format!(
+                    "substr() takes 2 or 3 arguments, got {}",
+                    args.len()
+                )));
+            }
+            let chars: Vec<char> = text(0)?.chars().collect();
+            let start = (as_i64(&args[1]).unwrap_or(0).max(0) as usize).min(chars.len());
+            let end = if args.len() == 3 {
+                let len = as_i64(&args[2]).unwrap_or(0).max(0) as usize;
+                (start + len).min(chars.len())
+            } else {
+                chars.len()
+            };
+            Ok(Str(std::sync::Arc::from(
+                chars[start..end].iter().collect::<String>(),
+            )))
+        }
+        // ── genomic ──────────────────────────────────────────────────────
+        "gc" => {
+            arity(1)?;
+            Ok(Float(gc_fraction(&text(0)?)))
+        }
+        "revcomp" => {
+            arity(1)?;
+            Ok(Str(std::sync::Arc::from(revcomp(&text(0)?))))
+        }
+        "translate" => match args.len() {
+            1 => Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, 0)))),
+            2 => {
+                let frame = as_i64(&args[1]).unwrap_or(0).max(0) as usize;
+                Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, frame))))
+            }
+            n => Err(bad(format!("translate() takes 1 or 2 arguments, got {n}"))),
+        },
+        "codon_at" => {
+            arity(2)?;
+            let chars: Vec<char> = text(0)?.chars().collect();
+            let i = as_i64(&args[1]).unwrap_or(-1);
+            if i < 0 || (i as usize) + 3 > chars.len() {
+                Ok(Null)
+            } else {
+                let i = i as usize;
+                Ok(Str(std::sync::Arc::from(
+                    chars[i..i + 3].iter().collect::<String>(),
+                )))
+            }
+        }
+        _ => Err(bad(format!("unknown function {name}()"))),
+    }
+}
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn s(v: &str) -> RuntimeValue {
+        RuntimeValue::Str(Arc::from(v))
+    }
+    fn call(name: &str, args: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        call_builtin(name, args, 0)
+    }
+
+    #[test]
+    fn scalar_math() {
+        use RuntimeValue::*;
+        assert_eq!(call("abs", &[Int(-5)]).unwrap(), Int(5));
+        assert_eq!(call("abs", &[Float(-2.5)]).unwrap(), Float(2.5));
+        assert_eq!(call("floor", &[Float(3.9)]).unwrap(), Int(3));
+        assert_eq!(call("ceil", &[Float(3.1)]).unwrap(), Int(4));
+        assert_eq!(call("round", &[Float(2.49)]).unwrap(), Int(2));
+        assert_eq!(call("round", &[Float(2.345), Int(2)]).unwrap(), Float(2.35));
+        assert_eq!(call("min", &[Int(3), Int(7), Int(1)]).unwrap(), Int(1));
+        assert_eq!(call("max", &[Int(3), Float(7.5)]).unwrap(), Float(7.5));
+        assert_eq!(call("pow", &[Int(2), Int(10)]).unwrap(), Float(1024.0));
+        assert_eq!(call("coalesce", &[Null, Null, Int(9)]).unwrap(), Int(9));
+    }
+
+    #[test]
+    fn strings() {
+        use RuntimeValue::*;
+        assert_eq!(call("len", &[s("ACGT")]).unwrap(), Int(4));
+        assert_eq!(call("upper", &[s("acgt")]).unwrap(), s("ACGT"));
+        assert_eq!(call("contains", &[s("EGFR p.L858R"), s("L858R")]).unwrap(), Bool(true));
+        assert_eq!(call("substr", &[s("ACGTACGT"), Int(2), Int(3)]).unwrap(), s("GTA"));
+        assert_eq!(call("concat", &[s("chr"), Int(7)]).unwrap(), s("chr7"));
+    }
+
+    #[test]
+    fn genomic() {
+        use RuntimeValue::*;
+        assert_eq!(call("gc", &[s("GGCC")]).unwrap(), Float(1.0));
+        assert_eq!(call("gc", &[s("ATAT")]).unwrap(), Float(0.0));
+        assert_eq!(call("revcomp", &[s("AACG")]).unwrap(), s("CGTT"));
+        // ATG AAA TAG → M K *
+        assert_eq!(call("translate", &[s("ATGAAATAG")]).unwrap(), s("MK*"));
+        // frame 1 of xATGTTT → CV? offset 1: TGT TT -> C
+        assert_eq!(call("translate", &[s("ATGTTT"), Int(0)]).unwrap(), s("MF"));
+        assert_eq!(call("codon_at", &[s("ATGAAA"), Int(3)]).unwrap(), s("AAA"));
+        assert_eq!(call("codon_at", &[s("ATG"), Int(2)]).unwrap(), Null);
+    }
+
+    #[test]
+    fn errors() {
+        // unknown name and arity/type errors surface as Builtin errors.
+        assert!(matches!(call("frobnicate", &[]), Err(VmError::Builtin(_))));
+        assert!(matches!(call("abs", &[]), Err(VmError::Builtin(_))));
+        assert!(matches!(call("gc", &[RuntimeValue::Int(5)]), Err(VmError::Builtin(_))));
+    }
 }

@@ -15,7 +15,9 @@ mod tui;
 mod update;
 
 use clap::{Parser, Subcommand};
-use codonsplice_core::{compile, disassemble, suggest_param, CompileError, Vm, VmOutput};
+use codonsplice_core::{
+    compile, disassemble, suggest_function, suggest_param, CompileError, Vm, VmOutput,
+};
 
 #[derive(Parser)]
 #[command(
@@ -209,14 +211,17 @@ fn fail_with(source: &str, err: &CompileError) -> std::process::ExitCode {
     std::process::ExitCode::FAILURE
 }
 
-/// For an unknown-parameter error, look up the CALL operation (by re-parsing)
-/// and compute a "did you mean" suggestion against that op's parameter set.
+/// Compute a "did you mean" suggestion for the errors that support one: an
+/// unknown WITH parameter (against the CALL op's params) or an unknown function
+/// (against the builtin names).
 pub fn suggestion_for(source: &str, err: &CompileError) -> Option<String> {
-    if let CompileError::UnknownParam { key, .. } = err {
-        let op = spliceql::parse(source).ok()?.call?.operation;
-        suggest_param(key, &op)
-    } else {
-        None
+    match err {
+        CompileError::UnknownParam { key, .. } => {
+            let op = spliceql::parse(source).ok()?.call?.operation;
+            suggest_param(key, &op)
+        }
+        CompileError::UnknownFunction { name, .. } => suggest_function(name),
+        _ => None,
     }
 }
 
