@@ -156,6 +156,9 @@ fn format_from_byte(b: u8) -> Format {
         1 => Format::Vcf,
         2 => Format::Fasta,
         3 => Format::Bed,
+        4 => Format::Cram,
+        5 => Format::Json,
+        6 => Format::Tsv,
         _ => Format::Cram,
     }
 }
@@ -167,6 +170,8 @@ fn format_label(f: &Format) -> &'static str {
         Format::Fasta => "fasta",
         Format::Bed => "bed",
         Format::Cram => "cram",
+        Format::Json => "json",
+        Format::Tsv => "tsv",
     }
 }
 
@@ -373,6 +378,13 @@ impl Vm {
             },
             Format::Cram => {
                 return Err(VmError::UnsupportedInto("cram (no reader)".to_string()))
+            }
+            // Output-only sinks — not valid as a FROM source.
+            Format::Json | Format::Tsv => {
+                return Err(VmError::SourceFormat {
+                    expected: "bam/vcf/bed/fasta",
+                    got: format_label(&fmt),
+                })
             }
         };
         let dataset = Dataset {
@@ -1046,11 +1058,78 @@ fn serialize_records(fmt: Format, records: &[Record]) -> Result<Vec<u8>, VmError
     match fmt {
         Format::Vcf => Ok(records_to_vcf(records).into_bytes()),
         Format::Bed => Ok(records_to_bed(records).into_bytes()),
-        // JSON is the lossless default; `INTO fasta` is repurposed as the JSON
-        // sink for record streams (the parser has no `json` format token yet).
+        // Real sinks: NDJSON (one object per line) and TSV (header + rows).
+        Format::Json => Ok(records_to_ndjson(records).into_bytes()),
+        Format::Tsv => Ok(records_to_tsv(records).into_bytes()),
+        // `INTO fasta` predates the `json` token and is kept as the JSON-array
+        // sink for backward compatibility.
         Format::Fasta => Ok(records_to_json(records).into_bytes()),
         Format::Bam | Format::Cram => Err(VmError::UnsupportedInto(label.to_string())),
     }
+}
+
+/// Records → newline-delimited JSON (NDJSON / JSON Lines): one JSON object per
+/// line, so large streams can be written without buffering a whole array.
+pub fn records_to_ndjson(records: &[Record]) -> String {
+    let mut out = String::new();
+    for r in records {
+        out.push_str(&record_to_json(r).to_string());
+        out.push('\n');
+    }
+    out
+}
+
+/// Records → TSV: a header row of column names, then one tab-separated row per
+/// record. Columns are the first-seen union of keys across records; missing
+/// values render empty. Tabs/newlines inside string values are sanitized to
+/// spaces so the grid stays well-formed.
+pub fn records_to_tsv(records: &[Record]) -> String {
+    use serde_json::Value as J;
+
+    // Flatten each record to a JSON object (non-objects get a single "value" key).
+    let objs: Vec<serde_json::Map<String, J>> = records
+        .iter()
+        .map(|r| match record_to_json(r) {
+            J::Object(m) => m,
+            other => {
+                let mut m = serde_json::Map::new();
+                m.insert("value".to_string(), other);
+                m
+            }
+        })
+        .collect();
+
+    // First-seen union of column names.
+    let mut cols: Vec<String> = Vec::new();
+    for o in &objs {
+        for k in o.keys() {
+            if !cols.iter().any(|c| c == k) {
+                cols.push(k.clone());
+            }
+        }
+    }
+
+    let cell = |v: Option<&J>| -> String {
+        let s = match v {
+            Some(J::String(s)) => s.clone(),
+            Some(J::Null) | None => String::new(),
+            Some(other) => other.to_string(),
+        };
+        s.replace('\t', " ").replace('\n', " ")
+    };
+
+    let mut out = String::new();
+    if cols.is_empty() {
+        return out;
+    }
+    out.push_str(&cols.join("\t"));
+    out.push('\n');
+    for o in &objs {
+        let row: Vec<String> = cols.iter().map(|c| cell(o.get(c))).collect();
+        out.push_str(&row.join("\t"));
+        out.push('\n');
+    }
+    out
 }
 
 /// Records → JSON array (lossless; used for roundtrip + the WASM bridge).

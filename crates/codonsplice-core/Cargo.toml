@@ -13,7 +13,9 @@ spliceql = { path = "../spliceql" }
 # so the native VM links its plain functions directly (BAM/VCF parsing, coverage,
 # variant calling, BAI seeking). Referenced by relative path to the sibling repo.
 cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core", version = "0.1.0" }
-serde_json = "1"
+# preserve_order keeps JSON/TSV columns in record/projection order (a Variant's
+# struct-field order, or the SELECT column order) instead of sorting them.
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 # Integration tests compare the VM against direct cnvlens-core calls and parse

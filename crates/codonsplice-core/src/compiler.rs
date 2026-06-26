@@ -255,6 +255,8 @@ pub fn format_byte(f: &Format) -> u8 {
         Format::Fasta => 2,
         Format::Bed => 3,
         Format::Cram => 4,
+        Format::Json => 5,
+        Format::Tsv => 6,
     }
 }
 
