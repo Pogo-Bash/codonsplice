@@ -134,10 +134,35 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          # spliceql first (no internal deps), then the engine.
-          cargo publish -p spliceql --locked || echo "spliceql already published"
-          sleep 20
-          cargo publish -p codonsplice-core --locked || echo "core already published"
+          set -uo pipefail
+          # Publish a crate, tolerating only the idempotent "already uploaded at
+          # this version" case. Any OTHER failure (e.g. a path dep without a
+          # version, or building against a stale registry dep) fails the job —
+          # we no longer swallow real errors with `|| echo`.
+          publish() {
+            local label="$1"; shift
+            echo "::group::publish ${label}"
+            if cargo publish "$@" 2>&1 | tee /tmp/pub.log; then
+              echo "✓ published ${label}"
+            elif grep -qiE "already (exists|uploaded)|is already uploaded|crate version .* is already (uploaded|being uploaded)" /tmp/pub.log; then
+              echo "= ${label} already on crates.io at this version — skipping"
+            else
+              echo "::error::publish failed for ${label} (see log above)"
+              echo "::endgroup::"
+              exit 1
+            fi
+            echo "::endgroup::"
+          }
+          # Dependency order: spliceql (no internal deps) → codonsplice-core
+          # (depends on spliceql + cnvlens-core, both on crates.io). cnvlens-core
+          # is published out-of-band from the cnvlens repo. The `sleep`s give the
+          # crates.io index time to propagate so the next crate can resolve the
+          # one just published. Not --locked: the published crate is verified by
+          # building against registry versions of its path deps, which the
+          # workspace lock does not describe.
+          publish "spliceql"         -p spliceql
+          sleep 30
+          publish "codonsplice-core" -p codonsplice-core
 
   # ── 4b. Verify the compiled binary against the sample BAM ──────────────────
   verify:

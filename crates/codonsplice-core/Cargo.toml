@@ -6,9 +6,12 @@ description = "CodonSplice engine — SpliceQL bytecode compiler, VM, and (Phase
 license = "MIT"
 
 # The read-only spliceql language crate (lexer + parser + AST), referenced via
-# the workspace `crates/spliceql` symlink.
+# the workspace `crates/spliceql` symlink. The `version` is required for
+# `cargo publish` (the path is used for local builds; downstream consumers
+# resolve the registry version). Must be >= the spliceql release that carries
+# Format::Json/Tsv, hence 0.1.1.
 [dependencies]
-spliceql = { path = "../spliceql" }
+spliceql = { path = "../spliceql", version = "0.1.1" }
 # Phase 4: the genomic execution backend. cnvlens-core exposes an `rlib` target,
 # so the native VM links its plain functions directly (BAM/VCF parsing, coverage,
 # variant calling, BAI seeking). Referenced by relative path to the sibling repo.
