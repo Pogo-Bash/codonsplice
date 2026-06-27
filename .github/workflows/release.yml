@@ -348,6 +348,7 @@ jobs:
           mkdir -p release
           find artifacts -type f \( -name 'splice-*' \) -exec cp {} release/ \;
           cp scripts/install.sh release/install.sh
+          cp scripts/install.ps1 release/install.ps1
           (cd release && sha256sum splice-* > SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:

@@ -46,7 +46,10 @@ curl -fsSL https://github.com/Pogo-Bash/codonsplice/releases/latest/download/ins
 # npm (cross-platform; pulls the matching platform binary, incl. darwin-arm64)
 npm install -g @codonsplice/cli
 
-# Windows (winget)
+# Windows — PowerShell one-liner (downloads splice.exe, adds it to PATH, no admin)
+irm https://github.com/Pogo-Bash/codonsplice/releases/latest/download/install.ps1 | iex
+
+# Windows — winget
 winget install Pogo-Bash.CodonSplice
 ```
 
@@ -59,7 +62,7 @@ winget install Pogo-Bash.CodonSplice
 > ```
 
 `splice update` self-updates to the latest release; `splice uninstall` removes
-it. Current release: **v0.2.5**.
+it. Current release: **v0.2.6**.
 
 ---
 
