@@ -113,6 +113,12 @@ jobs:
           for f in pkg/package.json pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
             [ -f "$f" ] && sed -i "s/\"version\": \"[^\"]*/\"version\": \"$VERSION/" "$f"
           done
+          # Keep the framework wrappers' @codonsplice/wasm dependency in lockstep
+          # with this release, so `npm i @codonsplice/vue@X` pulls the matching
+          # @codonsplice/wasm — not a stale range that resolves to an old engine.
+          for f in pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
+            [ -f "$f" ] && sed -i "s#\"@codonsplice/wasm\": \"[^\"]*\"#\"@codonsplice/wasm\": \"^$VERSION\"#" "$f"
+          done
       - name: Publish wasm + framework wrappers
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
