@@ -1,0 +1,25 @@
+{
+  "name": "@codonsplice/editor",
+  "version": "0.1.1",
+  "description": "Reusable CodeMirror 6 SpliceQL editor (syntax highlighting + IntelliSense) for the CodonSplice engine",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "dependencies": {
+    "codemirror": "^6.0.2",
+    "@codemirror/view": "^6.43.3",
+    "@codemirror/state": "^6.7.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@lezer/highlight": "^1.2.3"
+  },
+  "keywords": ["spliceql", "codemirror", "editor", "genomics", "bioinformatics", "syntax-highlighting", "autocomplete"],
+  "license": "MIT",
+  "repository": "github:Pogo-Bash/codonsplice"
+}

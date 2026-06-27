@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "type": "module",
   "main": "index.js",
-  "dependencies": { "@codonsplice/wasm": "^0.2.2" },
+  "dependencies": { "@codonsplice/wasm": "^0.2.2", "@codonsplice/editor": "^0.1.1" },
   "peerDependencies": { "vue": "*" },
   "license": "MIT"
 }

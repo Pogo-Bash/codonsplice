@@ -110,7 +110,7 @@ jobs:
       - name: Set version from tag
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          for f in pkg/package.json pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
+          for f in pkg/package.json pkg/editor/package.json pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
             [ -f "$f" ] && sed -i "s/\"version\": \"[^\"]*/\"version\": \"$VERSION/" "$f"
           done
           # Keep the framework wrappers' @codonsplice/wasm dependency in lockstep
@@ -119,11 +119,18 @@ jobs:
           for f in pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
             [ -f "$f" ] && sed -i "s#\"@codonsplice/wasm\": \"[^\"]*\"#\"@codonsplice/wasm\": \"^$VERSION\"#" "$f"
           done
+          # Likewise keep each wrapper's @codonsplice/editor dependency in lockstep
+          # so the bundled CodeMirror SpliceQL editor matches this release.
+          for f in pkg/react/package.json pkg/vue/package.json pkg/svelte/package.json pkg/astro/package.json; do
+            [ -f "$f" ] && sed -i "s#\"@codonsplice/editor\": \"[^\"]*\"#\"@codonsplice/editor\": \"^$VERSION\"#" "$f"
+          done
       - name: Publish wasm + framework wrappers
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for dir in pkg pkg/react pkg/vue pkg/svelte pkg/astro; do
+          # Publish @codonsplice/editor BEFORE the wrappers — they depend on it,
+          # so it must already exist on the registry when their dep ranges resolve.
+          for dir in pkg pkg/editor pkg/react pkg/vue pkg/svelte pkg/astro; do
             echo "Publishing $dir..."
             (cd "$dir" && npm publish --access public) \
               || echo "skip $dir (already published at this version?)"
