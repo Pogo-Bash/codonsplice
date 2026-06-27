@@ -862,9 +862,14 @@ impl Compiler {
         }
 
         // 4. SELECT → PROJECT (table appended after HALT)
-        let mut project_patch: Option<(usize, &[SelectItem])> = None;
+        let mut project_patch: Option<(usize, Vec<SelectItem>)> = None;
         if let Some(items) = &query.select {
-            self.emit(OpCode::Project, span_of_items(items, query.span));
+            // When the sink is VCF, make sure the fixed VCF identity columns
+            // (CHROM/POS/REF/ALT) survive the projection even if the user did
+            // not name them, so the writer doesn't emit a malformed `.` CHROM
+            // (#15). Extra projected columns still flow to INFO.
+            let items = augment_projection_for_vcf(items, query.into.as_ref());
+            self.emit(OpCode::Project, span_of_items(&items, query.span));
             let patch = self.code.len();
             self.emit_u16(0);
             project_patch = Some((patch, items));
@@ -899,9 +904,9 @@ impl Compiler {
             self.patch_u16(patch, off as u16);
             self.patch_u16(patch + 2, len as u16);
         }
-        if let Some((patch, items)) = project_patch {
+        if let Some((patch, items)) = &project_patch {
             let off = self.append_projection(items)?;
-            self.patch_u16(patch, off as u16);
+            self.patch_u16(*patch, off as u16);
         }
         if let Some((patch, items)) = order_patch {
             let off = self.append_order(items)?;
@@ -1433,15 +1438,83 @@ fn flip_op(op: &BinOp) -> BinOp {
     }
 }
 
-/// Derive a column name for an un-aliased `SELECT` item.
-fn default_col_name(expr: &Expr, index: usize) -> String {
-    match expr {
-        Expr::Ident(name, _) => name.clone(),
-        Expr::Var(name, _) => name.clone(),
-        Expr::FieldAccess { field, .. } => field.clone(),
-        Expr::Wildcard(_) => "*".to_string(),
-        _ => format!("col{}", index + 1),
+/// True if a `SELECT` item already provides a column named `name` (by `AS`
+/// alias or as a bare `Ident`).
+fn item_provides(item: &SelectItem, name: &str) -> bool {
+    if item.alias.as_deref() == Some(name) {
+        return true;
     }
+    matches!(&item.expr, Expr::Ident(n, _) if n == name)
+}
+
+/// For a VCF sink, prepend the canonical VCF identity columns
+/// (`chrom`/`pos`/`ref`/`alt`) the projection does not already provide, so the
+/// writer can fill the fixed `#CHROM/POS/REF/ALT` fields instead of `.` (#15).
+/// A no-op for non-VCF sinks and for `SELECT *` (which already carries every
+/// field). The `chr` / `ref_base` aliases the writer also honors count as
+/// provided.
+fn augment_projection_for_vcf(items: &[SelectItem], into: Option<&IntoClause>) -> Vec<SelectItem> {
+    let span = match items.first() {
+        Some(i) => i.span,
+        None => return items.to_vec(),
+    };
+    let is_vcf = matches!(into, Some(c) if c.format == Format::Vcf);
+    let has_wildcard = items.iter().any(|i| matches!(i.expr, Expr::Wildcard(_)));
+    if !is_vcf || has_wildcard {
+        return items.to_vec();
+    }
+
+    let mut prefix = Vec::new();
+    for &(canon, alt) in &[
+        ("chrom", Some("chr")),
+        ("pos", None),
+        ("ref", Some("ref_base")),
+        ("alt", None),
+    ] {
+        let covered = items
+            .iter()
+            .any(|i| item_provides(i, canon) || alt.is_some_and(|a| item_provides(i, a)));
+        if !covered {
+            prefix.push(SelectItem {
+                expr: Expr::Ident(canon.to_string(), span),
+                alias: None,
+                span,
+            });
+        }
+    }
+    if prefix.is_empty() {
+        return items.to_vec();
+    }
+    prefix.extend_from_slice(items);
+    prefix
+}
+
+/// Derive a column name for an un-aliased `SELECT` item. A bare field/var keeps
+/// its name; a function call is named `fn_arg` (`round(qual)` → `round_qual`,
+/// `gc(ref)` → `gc_ref`) so computed columns are self-documenting and stable
+/// instead of positional `colN` (#18). `AS` always wins over this.
+fn default_col_name(expr: &Expr, index: usize) -> String {
+    fn name_of(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name, _) => Some(name.clone()),
+            Expr::Var(name, _) => Some(name.clone()),
+            Expr::FieldAccess { field, .. } => Some(field.clone()),
+            Expr::Wildcard(_) => Some("*".to_string()),
+            Expr::Call { callee, args, .. } => {
+                let fname = match callee.as_ref() {
+                    Expr::Ident(n, _) => n.clone(),
+                    _ => return None,
+                };
+                // `fn(field)` → `fn_field`; nullary or multi/complex arg → `fn`.
+                match (args.len(), args.first().and_then(name_of)) {
+                    (1, Some(arg)) if arg != "*" => Some(format!("{fname}_{arg}")),
+                    _ => Some(fname),
+                }
+            }
+            _ => None,
+        }
+    }
+    name_of(expr).unwrap_or_else(|| format!("col{}", index + 1))
 }
 
 fn span_of_items(items: &[SelectItem], fallback: Span) -> Span {

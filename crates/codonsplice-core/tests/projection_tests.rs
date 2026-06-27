@@ -54,6 +54,22 @@ fn select_columns_produce_rows() {
 }
 
 #[test]
+fn computed_columns_get_inferred_names() {
+    // #18: un-aliased function calls are named `fn_arg`, not positional `colN`.
+    let rs = rows(r#"SELECT pos, round(qual), gc(ref) WHERE chr = "7" CALL variants LIMIT 1"#);
+    let keys: Vec<String> = match &rs[0] {
+        Record::Row(cols) => cols.iter().map(|(k, _)| k.clone()).collect(),
+        other => panic!("expected Row, got {other:?}"),
+    };
+    assert!(keys.contains(&"round_qual".to_string()), "keys: {keys:?}");
+    assert!(keys.contains(&"gc_ref".to_string()), "keys: {keys:?}");
+    assert!(
+        !keys.iter().any(|k| k.starts_with("col")),
+        "computed columns should not fall back to colN: {keys:?}"
+    );
+}
+
+#[test]
 fn select_expression_with_alias() {
     let rs = rows(r#"SELECT af * 100 AS pct WHERE chr = "7" CALL variants LIMIT 2"#);
     assert!(!rs.is_empty());

@@ -42,6 +42,25 @@ fn data_rows(vcf: &str) -> Vec<&str> {
 }
 
 #[test]
+fn vcf_chrom_filled_when_not_selected() {
+    // #15: a projection that omits chrom must still fill the fixed #CHROM field
+    // (the canonical VCF identity columns are auto-included for a VCF sink),
+    // never a malformed ".".
+    let vcf = run_into_vcf(
+        "chrom",
+        r#"SELECT pos, ref, alt, gc(ref) AS gc WHERE chr = "7" CALL variants"#,
+    );
+    let rows = data_rows(&vcf);
+    assert!(!rows.is_empty(), "no rows:\n{vcf}");
+    for row in &rows {
+        let chrom = row.split('\t').next().unwrap();
+        assert_eq!(chrom, "7", "CHROM must be the contig, not '.': {row}");
+    }
+    // The extra projected column still rides in INFO.
+    assert!(vcf.contains("gc="), "gc should be in INFO:\n{vcf}");
+}
+
+#[test]
 fn projected_select_writes_data_rows() {
     // The headline bug: with a custom SELECT the body used to be empty.
     let vcf = run_into_vcf(
