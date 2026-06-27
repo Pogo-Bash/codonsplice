@@ -171,24 +171,92 @@ fn split_desc(value: &str) -> (Vec<String>, String) {
     }
 }
 
-/// `@input: name required|optional [type] [default] "desc"`
-fn parse_input(value: &str) -> Option<InputDecl> {
-    let (tokens, desc) = split_desc(value);
-    let name = tokens.first()?.clone();
-    let required = tokens.get(1).map(|t| t == "required").unwrap_or(false);
-
-    let mut kind = VarKind::Str;
-    let mut default = None;
-    let mut rest = &tokens[tokens.len().min(2)..];
-    if let Some(first) = rest.first() {
-        if let Some(k) = VarKind::parse(first) {
-            kind = k;
-            rest = &rest[1..];
+/// Tokenize a directive value on whitespace, treating a double-quoted run as a
+/// single token (quotes stripped). Each token is tagged with whether it was
+/// quoted, so a quoted string *default* (`"7"`) can be told apart from a bare
+/// numeric/bool default and from the trailing quoted description.
+fn tokenize(value: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut quoted = false;
+    let mut has_tok = false;
+    for c in value.chars() {
+        if in_quote {
+            if c == '"' {
+                in_quote = false;
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' {
+            in_quote = true;
+            quoted = true;
+            has_tok = true;
+        } else if c.is_whitespace() {
+            if has_tok {
+                out.push((std::mem::take(&mut cur), quoted));
+                quoted = false;
+                has_tok = false;
+            }
+        } else {
+            cur.push(c);
+            has_tok = true;
         }
     }
-    if let Some(d) = rest.first() {
-        default = Some(d.clone());
+    if has_tok {
+        out.push((cur, quoted));
     }
+    out
+}
+
+/// `@input: name [required|optional] [type] [default] ["desc"]`
+///
+/// The description, when present, is the trailing **quoted** token; any token
+/// between the type and the description is the default. This is what lets a
+/// quoted string default (`"7"`) survive instead of being mistaken for the
+/// description (previously the *first* quote was always taken as the desc, so
+/// string defaults were silently dropped).
+fn parse_input(value: &str) -> Option<InputDecl> {
+    let toks = tokenize(value);
+    let name = toks.first()?.0.clone();
+    let mut i = 1;
+
+    let required = match toks.get(i).map(|(t, _)| t.as_str()) {
+        Some("required") => {
+            i += 1;
+            true
+        }
+        Some("optional") => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+
+    // An unquoted recognized type keyword (str/float/int/bool) is the kind.
+    let mut kind = VarKind::Str;
+    if let Some((t, quoted)) = toks.get(i) {
+        if !quoted {
+            if let Some(k) = VarKind::parse(t) {
+                kind = k;
+                i += 1;
+            }
+        }
+    }
+
+    // The trailing quoted token (beyond the leading fixed tokens) is the desc.
+    let mut end = toks.len();
+    let mut desc = String::new();
+    if end > i {
+        let (last, last_quoted) = &toks[end - 1];
+        if *last_quoted {
+            desc = last.clone();
+            end -= 1;
+        }
+    }
+
+    // Whatever remains between the type and the description is the default.
+    let default = if end > i { Some(toks[i].0.clone()) } else { None };
 
     Some(InputDecl {
         name,
@@ -260,6 +328,20 @@ mod tests {
         assert_eq!(af.kind, VarKind::Float);
         assert_eq!(af.default.as_deref(), Some("0.05"));
         assert_eq!(af.desc, "Min AF");
+    }
+
+    #[test]
+    fn quoted_string_default_is_not_swallowed_by_desc() {
+        // Regression for #17: a quoted string default used to be parsed as the
+        // description, leaving the variable with no value.
+        let src = "-- @input: chr optional string \"7\" \"Chromosome to scan\"\n\
+                   FROM bam $bam\n";
+        let (d, _) = parse_directives(src);
+        let chr = d.input("chr").expect("chr input parsed");
+        assert!(!chr.required);
+        assert_eq!(chr.kind, VarKind::Str);
+        assert_eq!(chr.default.as_deref(), Some("7"));
+        assert_eq!(chr.desc, "Chromosome to scan");
     }
 
     #[test]
