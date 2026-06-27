@@ -236,14 +236,16 @@ fn negative_constant_param_is_allowed() {
 
 #[test]
 fn identical_constants_are_interned_once() {
-    let p = ok(r#"FROM bam "x.bam" WHERE a = 5 OR b = 5 CALL variants"#);
+    let p = ok(r#"FROM bam "x.bam" WHERE depth = 5 OR qual = 5 CALL variants"#);
     let fives = p.consts.iter().filter(|v| **v == Value::Int(5)).count();
     assert_eq!(fives, 1, "Int(5) should be interned exactly once");
 }
 
 #[test]
 fn strings_ints_floats_intern() {
-    let p = ok(r#"FROM bam "x.bam" WHERE a = "z" AND b = "z" AND c = 1.5 AND d = 1.5 CALL variants"#);
+    let p = ok(
+        r#"FROM bam "x.bam" WHERE ref = "z" AND alt = "z" AND af = 1.5 AND qual = 1.5 CALL variants"#,
+    );
     assert_eq!(
         p.consts.iter().filter(|v| **v == Value::Str("z".into())).count(),
         1
@@ -252,10 +254,32 @@ fn strings_ints_floats_intern() {
         p.consts.iter().filter(|v| **v == Value::Float(1.5)).count(),
         1
     );
-    // distinct field names a,b,c,d are interned separately
-    for name in ["a", "b", "c", "d"] {
+    // distinct field names are interned separately
+    for name in ["ref", "alt", "af", "qual"] {
         assert!(p.consts.contains(&Value::Str(name.into())), "missing {name}");
     }
+}
+
+#[test]
+fn where_unknown_field_is_a_compile_error() {
+    // #16: `pos` is not a coverage field — reject at compile time with the valid
+    // field set, instead of silently matching zero rows.
+    let e = err(r#"FROM bam "x.bam" WHERE pos >= 100 CALL coverage"#);
+    assert!(matches!(e, CompileError::UnknownField { .. }), "got {e:?}");
+    let msg = e.message();
+    assert!(
+        msg.contains("unknown field") && msg.contains("coverage") && msg.contains("start"),
+        "message should name the kind and list valid fields: {msg}"
+    );
+}
+
+#[test]
+fn where_valid_fields_still_compile() {
+    // The real coverage field compiles; `pos` is valid for variants.
+    ok(r#"FROM bam "x.bam" WHERE start >= 100 CALL coverage"#);
+    ok(r#"FROM bam "x.bam" WHERE pos >= 100 AND depth > 10 CALL variants"#);
+    // A function over a valid field is fine (callee is not a field).
+    ok(r#"FROM bam "x.bam" WHERE upper(ref) = "A" CALL variants"#);
 }
 
 // ── Group 4 — VM expression execution ────────────────────────────────────────

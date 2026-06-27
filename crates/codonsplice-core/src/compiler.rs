@@ -384,6 +384,14 @@ pub enum CompileError {
         name: String,
         span: Span,
     },
+    /// A `WHERE` predicate references a field the record type cannot answer.
+    /// `valid` is the record kind's full field set, listed in the diagnostic.
+    UnknownField {
+        name: String,
+        kind: &'static str,
+        valid: &'static [&'static str],
+        span: Span,
+    },
     /// A builtin called with the wrong number of arguments. `expected` is a
     /// human description ("1", "1 or 2", "at least 1").
     FunctionArity {
@@ -422,6 +430,7 @@ impl CompileError {
             CompileError::UnknownFunction { .. } => "E006",
             CompileError::FunctionArity { .. } => "E007",
             CompileError::FunctionArgType { .. } => "E008",
+            CompileError::UnknownField { .. } => "E009",
             CompileError::ParseError(_) => "E000",
         }
     }
@@ -436,7 +445,8 @@ impl CompileError {
             | CompileError::MultipleFrom { span }
             | CompileError::UnknownFunction { span, .. }
             | CompileError::FunctionArity { span, .. }
-            | CompileError::FunctionArgType { span, .. } => *span,
+            | CompileError::FunctionArgType { span, .. }
+            | CompileError::UnknownField { span, .. } => *span,
             CompileError::ParseError(e) => e.span(),
         }
     }
@@ -463,6 +473,12 @@ impl CompileError {
             CompileError::UnknownFunction { name, .. } => {
                 format!("unknown function {name:?}")
             }
+            CompileError::UnknownField {
+                name, kind, valid, ..
+            } => format!(
+                "unknown field {name:?} for {kind} records — valid fields: {}",
+                valid.join(", ")
+            ),
             CompileError::FunctionArity {
                 name, expected, got, ..
             } => format!("function {name:?} takes {expected} argument(s), got {got}"),
@@ -819,6 +835,86 @@ struct Region {
     debug: Vec<DebugInfo>,
 }
 
+/// The field set the `WHERE` predicate can resolve, by record kind. These
+/// mirror the runtime resolvers in `runtime.rs` (`variant_field` / `window_field`
+/// / `aln_field`) and must be kept in sync. The predicate runs on the CALL's
+/// output records (or the raw source records when there is no CALL).
+const VARIANT_FIELDS: &[&str] = &[
+    "chr", "chrom", "pos", "ref", "alt", "qual", "depth", "ref_count", "alt_count",
+    "af", "allele_freq", "strand_bias", "kind", "filter", "id",
+];
+const COVERAGE_FIELDS: &[&str] = &["chr", "chrom", "start", "end", "coverage", "normalized", "masked"];
+const ALIGNMENT_FIELDS: &[&str] = &[
+    "chr", "chrom", "pos", "mapq", "flag", "depth", "strand", "is_reverse", "is_duplicate",
+    "is_secondary",
+];
+
+/// The record kind (and its field set) the `WHERE` predicate is evaluated
+/// against. Returns `None` for kinds whose schema we don't model (cnv/header
+/// CALLs, fasta/bed sources), leaving those unchecked rather than risking a
+/// false-positive error.
+fn where_record_kind(query: &Query) -> Option<(&'static str, &'static [&'static str])> {
+    if let Some(call) = &query.call {
+        return match call.operation.as_str() {
+            "variants" => Some(("variant", VARIANT_FIELDS)),
+            "coverage" => Some(("coverage", COVERAGE_FIELDS)),
+            "reads" => Some(("alignment", ALIGNMENT_FIELDS)),
+            _ => None,
+        };
+    }
+    match query.from.format {
+        Format::Bam => Some(("alignment", ALIGNMENT_FIELDS)),
+        Format::Vcf => Some(("variant", VARIANT_FIELDS)),
+        _ => None,
+    }
+}
+
+/// Collect the bare field identifiers referenced as values in `expr`, skipping
+/// function-call callees (function names), `$variables`, and literals.
+fn collect_field_refs<'a>(expr: &'a Expr, out: &mut Vec<(&'a str, Span)>) {
+    match expr {
+        Expr::Ident(name, span) => out.push((name.as_str(), *span)),
+        Expr::Unary { operand, .. } => collect_field_refs(operand, out),
+        Expr::Binary { left, right, .. } => {
+            collect_field_refs(left, out);
+            collect_field_refs(right, out);
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_field_refs(a, out);
+            }
+        }
+        Expr::FieldAccess { object, .. } => collect_field_refs(object, out),
+        _ => {}
+    }
+}
+
+/// Reject a `WHERE` field the record type cannot answer (it would otherwise
+/// silently match zero rows). #16
+fn validate_where_fields(query: &Query) -> Result<(), CompileError> {
+    let filter = match &query.filter {
+        Some(f) => f,
+        None => return Ok(()),
+    };
+    let (kind, valid) = match where_record_kind(query) {
+        Some(k) => k,
+        None => return Ok(()),
+    };
+    let mut refs = Vec::new();
+    collect_field_refs(filter, &mut refs);
+    for (name, span) in refs {
+        if !valid.contains(&name) {
+            return Err(CompileError::UnknownField {
+                name: name.to_string(),
+                kind,
+                valid,
+                span,
+            });
+        }
+    }
+    Ok(())
+}
+
 impl Compiler {
     pub fn new(source: impl Into<String>) -> Self {
         Self {
@@ -831,6 +927,11 @@ impl Compiler {
 
     /// Compile a full query into a [`Program`].
     pub fn compile(mut self, query: &Query) -> Result<Program, CompileError> {
+        // 0. Static check: a WHERE field that the record type can't answer would
+        //    silently match nothing at runtime — reject it with a clear error
+        //    listing the valid fields instead. #16
+        validate_where_fields(query)?;
+
         // 1. FROM → OPEN_SOURCE + SCAN
         self.compile_from(&query.from);
 
