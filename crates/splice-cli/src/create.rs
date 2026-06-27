@@ -627,7 +627,7 @@ const BOOLEANS = ['true', 'false']
 const FORMATS = ['bam', 'vcf', 'bed', 'fasta', 'cram', 'json', 'tsv']
 const OPS = ['variants', 'cnv', 'coverage', 'reads', 'header']
 const PARAMS = ['min_af', 'min_allele_freq', 'min_depth', 'min_base_quality', 'min_mapping_quality', 'min_variant_reads', 'min_strand_bias', 'window_size', 'amp_threshold', 'del_threshold', 'min_windows', 'segmentation_method']
-const FIELDS = ['chr', 'chrom', 'pos', 'ref', 'alt', 'qual', 'depth', 'ref_count', 'alt_count', 'af', 'allele_freq', 'strand_bias', 'kind', 'filter', 'id', 'mapq', 'flag', 'strand', 'start', 'end', 'coverage', 'normalized']
+const FIELDS = ['chr', 'chrom', 'pos', 'ref', 'alt', 'qual', 'depth', 'ref_count', 'alt_count', 'af', 'allele_freq', 'strand_bias', 'kind', 'filter', 'id', 'mapq', 'flag', 'strand', 'is_reverse', 'is_duplicate', 'is_secondary', 'start', 'end', 'coverage', 'normalized', 'masked']
 const FUNCTIONS = ['abs', 'floor', 'ceil', 'round', 'sqrt', 'pow', 'min', 'max', 'log', 'coalesce', 'len', 'upper', 'lower', 'concat', 'contains', 'starts_with', 'ends_with', 'substr', 'gc', 'revcomp', 'translate', 'codon_at']
 const KW = new Set(KEYWORDS.map((s) => s.toLowerCase()))
 const BOOL = new Set(BOOLEANS)
