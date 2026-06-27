@@ -193,12 +193,12 @@ fn example_files(fw: Framework) -> Vec<(&'static str, &'static str)> {
 
 /// Editor + tooling npm dependencies every demo needs (CodeMirror 6).
 const EDITOR_DEPS: &[(&str, &str)] = &[
-    ("codemirror", "^6"),
-    ("@codemirror/view", "^6"),
-    ("@codemirror/state", "^6"),
-    ("@codemirror/language", "^6"),
-    ("@codemirror/autocomplete", "^6"),
-    ("@lezer/highlight", "^1"),
+    ("codemirror", "^6.0.2"),
+    ("@codemirror/view", "^6.43.3"),
+    ("@codemirror/state", "^6.7.0"),
+    ("@codemirror/language", "^6.12.4"),
+    ("@codemirror/autocomplete", "^6.20.3"),
+    ("@lezer/highlight", "^1.2.3"),
 ];
 
 // ANSI colors for the "splicifying" UX.
@@ -616,17 +616,21 @@ const RESET_CSS: &str = "/* default template styles removed by `splice create` â
 const EDITOR_JS: &str = r##"import { EditorView, minimalSetup } from 'codemirror'
 import { lineNumbers, highlightActiveLine, keymap } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
-import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { StreamLanguage, HighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language'
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete'
 import { tags as t } from '@lezer/highlight'
 
+// Vocabulary mirrors the SpliceQL lexer/grammar (CodonSplice engine). Keep in
+// sync with crates/spliceql when the language grows.
 const KEYWORDS = ['FROM', 'SELECT', 'WHERE', 'AND', 'OR', 'NOT', 'CALL', 'WITH', 'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'INTO', 'AS']
+const BOOLEANS = ['true', 'false']
 const FORMATS = ['bam', 'vcf', 'bed', 'fasta', 'cram', 'json', 'tsv']
 const OPS = ['variants', 'cnv', 'coverage', 'reads', 'header']
 const PARAMS = ['min_af', 'min_allele_freq', 'min_depth', 'min_base_quality', 'min_mapping_quality', 'min_variant_reads', 'min_strand_bias', 'window_size', 'amp_threshold', 'del_threshold', 'min_windows', 'segmentation_method']
 const FIELDS = ['chr', 'chrom', 'pos', 'ref', 'alt', 'qual', 'depth', 'ref_count', 'alt_count', 'af', 'allele_freq', 'strand_bias', 'kind', 'filter', 'id', 'mapq', 'flag', 'strand', 'start', 'end', 'coverage', 'normalized']
 const FUNCTIONS = ['abs', 'floor', 'ceil', 'round', 'sqrt', 'pow', 'min', 'max', 'log', 'coalesce', 'len', 'upper', 'lower', 'concat', 'contains', 'starts_with', 'ends_with', 'substr', 'gc', 'revcomp', 'translate', 'codon_at']
 const KW = new Set(KEYWORDS.map((s) => s.toLowerCase()))
+const BOOL = new Set(BOOLEANS)
 const TY = new Set([...FORMATS, ...OPS])
 const PR = new Set(PARAMS)
 const FD = new Set(FIELDS)
@@ -635,7 +639,7 @@ const FN = new Set(FUNCTIONS)
 const tokenTable = {
   spliceKw: t.keyword, spliceStr: t.string, spliceNum: t.number, spliceCom: t.lineComment,
   spliceOp: t.operator, spliceTy: t.typeName, splicePr: t.propertyName, spliceFd: t.variableName,
-  spliceVar: t.special(t.variableName), spliceFn: t.function(t.variableName),
+  spliceVar: t.special(t.variableName), spliceFn: t.function(t.variableName), spliceBool: t.bool,
 }
 
 const language = StreamLanguage.define({
@@ -649,6 +653,7 @@ const language = StreamLanguage.define({
     if (m) {
       const w = m[0].toLowerCase()
       if (KW.has(w)) return 'spliceKw'
+      if (BOOL.has(w)) return 'spliceBool'
       if (TY.has(w)) return 'spliceTy'
       if (PR.has(w)) return 'splicePr'
       if (FN.has(w)) return 'spliceFn'
@@ -665,6 +670,7 @@ const highlight = HighlightStyle.define([
   { tag: t.keyword, color: '#cba6f7', fontWeight: '600' },
   { tag: t.string, color: '#a6e3a1' },
   { tag: t.number, color: '#fab387' },
+  { tag: t.bool, color: '#fab387', fontWeight: '600' },
   { tag: t.lineComment, color: '#6c7086', fontStyle: 'italic' },
   { tag: t.operator, color: '#89dceb' },
   { tag: t.typeName, color: '#f9e2af' },
@@ -674,19 +680,41 @@ const highlight = HighlightStyle.define([
   { tag: t.function(t.variableName), color: '#89b4fa' },
 ])
 
-const COMPLETIONS = [
-  ...KEYWORDS.map((l) => ({ label: l, type: 'keyword', detail: 'clause' })),
-  ...FORMATS.map((l) => ({ label: l, type: 'type', detail: 'format' })),
-  ...OPS.map((l) => ({ label: l, type: 'function', detail: 'operation' })),
-  ...FUNCTIONS.map((l) => ({ label: l, type: 'function', detail: 'function' })),
-  ...PARAMS.map((l) => ({ label: l, type: 'property', detail: 'param' })),
-  ...FIELDS.map((l) => ({ label: l, type: 'variable', detail: 'field' })),
+// Pre-built completion groups. Functions expand to `name()` with the cursor
+// placed between the parens via a CodeMirror snippet.
+const KEYWORD_COMPLETIONS = KEYWORDS.map((l) => ({ label: l, type: 'keyword', detail: 'clause' }))
+const FORMAT_COMPLETIONS = FORMATS.map((l) => ({ label: l, type: 'type', detail: 'format' }))
+const OP_COMPLETIONS = OPS.map((l) => ({ label: l, type: 'function', detail: 'operation' }))
+const PARAM_COMPLETIONS = PARAMS.map((l) => ({ label: l, type: 'property', detail: 'param' }))
+const FIELD_COMPLETIONS = FIELDS.map((l) => ({ label: l, type: 'variable', detail: 'field' }))
+const BOOL_COMPLETIONS = BOOLEANS.map((l) => ({ label: l, type: 'constant', detail: 'literal' }))
+const FUNCTION_COMPLETIONS = FUNCTIONS.map((l) =>
+  snippetCompletion(l + '(${})', { label: l, type: 'function', detail: 'function' })
+)
+const ALL_COMPLETIONS = [
+  ...KEYWORD_COMPLETIONS, ...FORMAT_COMPLETIONS, ...OP_COMPLETIONS,
+  ...FUNCTION_COMPLETIONS, ...PARAM_COMPLETIONS, ...FIELD_COMPLETIONS, ...BOOL_COMPLETIONS,
 ]
+
+// The word immediately before the token being typed, lower-cased â€” used to pick
+// a context-appropriate completion set (e.g. formats right after FROM/INTO).
+function prevWord(ctx) {
+  const before = ctx.state.sliceDoc(Math.max(0, ctx.pos - 240), ctx.pos)
+  const m = /([A-Za-z_]\w*)\s+[\w$]*$/.exec(before)
+  return m ? m[1].toLowerCase() : null
+}
 
 function complete(ctx) {
   const word = ctx.matchBefore(/[\w$]+/)
   if (!word && !ctx.explicit) return null
-  return { from: word ? word.from : ctx.pos, options: COMPLETIONS, validFor: /[\w$]*/ }
+  const prev = prevWord(ctx)
+  let options
+  if (prev === 'from' || prev === 'into') options = FORMAT_COMPLETIONS
+  else if (prev === 'call') options = OP_COMPLETIONS
+  else if (prev === 'with') options = PARAM_COMPLETIONS
+  else if (prev === 'order' || prev === 'by') options = [...FIELD_COMPLETIONS, ...FUNCTION_COMPLETIONS]
+  else options = ALL_COMPLETIONS
+  return { from: word ? word.from : ctx.pos, options, validFor: /[\w$]*/ }
 }
 
 const theme = EditorView.theme(
@@ -706,6 +734,8 @@ const theme = EditorView.theme(
     '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: '#cba6f7', color: '#11111b' },
     '.cm-completionLabel': { fontWeight: '500' },
     '.cm-completionDetail': { color: '#7f849c', fontStyle: 'normal', marginLeft: '1.5em' },
+    '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': { backgroundColor: 'rgba(137,180,250,0.22)', color: '#89dceb' },
+    '.cm-nonmatchingBracket': { color: '#f38ba8' },
   },
   { dark: true }
 )
@@ -716,10 +746,12 @@ export function mountEditor(parent, { doc = '', onChange = () => {} } = {}) {
     state: EditorState.create({
       doc,
       extensions: [
-        keymap.of(completionKeymap),
+        keymap.of([...closeBracketsKeymap, ...completionKeymap]),
         minimalSetup,
         lineNumbers(),
         highlightActiveLine(),
+        bracketMatching(),
+        closeBrackets(),
         language,
         syntaxHighlighting(highlight),
         autocompletion({ override: [complete], activateOnTyping: true }),
