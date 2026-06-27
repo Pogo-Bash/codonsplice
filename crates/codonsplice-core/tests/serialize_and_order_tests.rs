@@ -134,6 +134,31 @@ fn order_by_limit_is_global_top_n() {
     assert_eq!(limited, expected, "LIMIT after ORDER BY must be the global top-N");
 }
 
+#[test]
+fn order_by_aliased_computed_column_sorts() {
+    // #14: ORDER BY on a SELECT alias must sort by the computed value, not leave
+    // the rows in production (position) order.
+    let out = run_rows(
+        r#"WHERE chr = "7" SELECT pos, sqrt(depth) AS sd CALL variants ORDER BY sd DESC LIMIT 8"#,
+    );
+    let recs = match out {
+        VmOutput::Rows(r) | VmOutput::Records(r) => r,
+        other => panic!("expected rows, got {other:?}"),
+    };
+    let sds: Vec<f64> = recs
+        .iter()
+        .map(|r| match r.get_field("sd") {
+            RuntimeValue::Float(x) => x,
+            RuntimeValue::Int(n) => n as f64,
+            v => panic!("sd not numeric: {v:?}"),
+        })
+        .collect();
+    assert!(sds.len() >= 2, "need rows to compare: {sds:?}");
+    for w in sds.windows(2) {
+        assert!(w[0] >= w[1], "ORDER BY alias not descending: {sds:?}");
+    }
+}
+
 // ── INTO json (NDJSON) and INTO tsv sinks ───────────────────────────────────
 
 #[test]

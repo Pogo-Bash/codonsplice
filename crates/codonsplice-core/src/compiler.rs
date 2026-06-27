@@ -909,7 +909,7 @@ impl Compiler {
             self.patch_u16(*patch, off as u16);
         }
         if let Some((patch, items)) = order_patch {
-            let off = self.append_order(items)?;
+            let off = self.append_order(items, query.select.as_deref())?;
             self.patch_u16(patch, off as u16);
         }
 
@@ -1112,8 +1112,20 @@ impl Compiler {
     /// Append an order-by table: `[u16 count]` then, per item,
     /// `[u16 expr_off, u16 expr_len, u8 direction]` (0 = ASC, 1 = DESC),
     /// followed by the key sub-programs.  Returns the table's offset.
-    fn append_order(&mut self, items: &[OrderItem]) -> Result<usize, CompileError> {
-        let exprs: Vec<&Expr> = items.iter().map(|i| &i.expr).collect();
+    fn append_order(
+        &mut self,
+        items: &[OrderItem],
+        select: Option<&[SelectItem]>,
+    ) -> Result<usize, CompileError> {
+        // ORDER BY runs on the original record *before* projection, so a key
+        // that names a SELECT column (its `AS` alias or inferred name) must be
+        // rewritten to the underlying expression — otherwise it loads a missing
+        // field, sorts on all-NULL keys, and leaves the rows unordered. #14
+        let resolved: Vec<Expr> = items
+            .iter()
+            .map(|i| resolve_order_key(&i.expr, select))
+            .collect();
+        let exprs: Vec<&Expr> = resolved.iter().collect();
         let regions = self.compile_region(&exprs)?;
 
         let table_off = self.code.len();
@@ -1436,6 +1448,25 @@ fn flip_op(op: &BinOp) -> BinOp {
         BinOp::GtEq => BinOp::LtEq,
         other => other.clone(),
     }
+}
+
+/// Resolve an `ORDER BY` key against the `SELECT` list: a bare identifier that
+/// names a projected column (by `AS` alias or by its inferred default name) is
+/// rewritten to that column's expression, so the sort key is computed from the
+/// original record. Anything else is returned unchanged. #14
+fn resolve_order_key(key: &Expr, select: Option<&[SelectItem]>) -> Expr {
+    if let (Expr::Ident(name, _), Some(items)) = (key, select) {
+        for (i, item) in items.iter().enumerate() {
+            let col = item
+                .alias
+                .clone()
+                .unwrap_or_else(|| default_col_name(&item.expr, i));
+            if col == *name {
+                return item.expr.clone();
+            }
+        }
+    }
+    key.clone()
 }
 
 /// True if a `SELECT` item already provides a column named `name` (by `AS`
