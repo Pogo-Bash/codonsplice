@@ -6,6 +6,7 @@
 #   cli-linux-x64/        — Linux x86_64 binary
 #   cli-linux-arm64/      — Linux aarch64 binary
 #   cli-darwin-x64/       — macOS Intel binary
+#   cli-darwin-arm64/     — macOS Apple Silicon binary
 #   cli-win32-x64/        — Windows x86_64 binary
 #
 # Binary source:
@@ -27,6 +28,7 @@ declare -A ASSETS=(
   ["cli-linux-x64"]="splice-linux-x86_64.tar.gz"
   ["cli-linux-arm64"]="splice-linux-aarch64.tar.gz"
   ["cli-darwin-x64"]="splice-macos-x86_64.tar.gz"
+  ["cli-darwin-arm64"]="splice-macos-aarch64.tar.gz"
   ["cli-win32-x64"]="splice-windows-x86_64.exe"
 )
 
@@ -77,6 +79,7 @@ cat > "$PKG_DIR/cli/package.json" <<EOF
     "@codonsplice/cli-linux-x64": "$VERSION",
     "@codonsplice/cli-linux-arm64": "$VERSION",
     "@codonsplice/cli-darwin-x64": "$VERSION",
+    "@codonsplice/cli-darwin-arm64": "$VERSION",
     "@codonsplice/cli-win32-x64": "$VERSION"
   }
 }
@@ -150,6 +153,6 @@ if [[ ${#SKIPPED[@]} -gt 0 ]]; then
 fi
 echo "All CLI packages ready in pkg/cli*/"
 echo "Publish with:"
-echo "  for d in pkg/cli pkg/cli-linux-x64 pkg/cli-linux-arm64 pkg/cli-darwin-x64 pkg/cli-win32-x64; do"
+echo "  for d in pkg/cli pkg/cli-linux-x64 pkg/cli-linux-arm64 pkg/cli-darwin-x64 pkg/cli-darwin-arm64 pkg/cli-win32-x64; do"
 echo "    (cd \$d && npm publish --access public)"
 echo "  done"

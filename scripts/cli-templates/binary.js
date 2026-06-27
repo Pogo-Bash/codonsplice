@@ -13,6 +13,7 @@ function getPlatformPackage() {
     'linux-x64': '@codonsplice/cli-linux-x64',
     'linux-arm64': '@codonsplice/cli-linux-arm64',
     'darwin-x64': '@codonsplice/cli-darwin-x64',
+    'darwin-arm64': '@codonsplice/cli-darwin-arm64',
     'win32-x64': '@codonsplice/cli-win32-x64',
   }
 

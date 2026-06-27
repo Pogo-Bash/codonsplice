@@ -198,6 +198,16 @@ screen_install() {
   printf 'Installing CodonSplice...\n\n'
 
   if [ "$METHOD" = cargo ]; then
+    # Build-from-source is a FALLBACK. Run it as the normal user, never under
+    # sudo/root: a root-owned ~/.cargo or ./target leaves cargo unable to write
+    # its caches on later (non-root) runs. Prebuilt binaries (option 1) are the
+    # primary path and need no toolchain.
+    if [ "$(id -u 2>/dev/null || echo 1000)" = 0 ]; then
+      bad "Don't build from source as root."
+      printf '   Re-run this installer as your normal user so cargo owns\n'
+      printf '   ~/.cargo and ./target. (Prebuilt binary = option 1, no sudo.)\n'
+      exit 1
+    fi
     printf 'Step 1/2  Running cargo install codonsplice...\n\n'
     cargo install codonsplice || { bad "cargo install failed."; exit 1; }
     printf '\nStep 2/2  Verifying...\n'

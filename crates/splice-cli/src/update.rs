@@ -84,6 +84,7 @@ fn asset_name() -> Option<&'static str> {
         ("linux", "x86_64") => Some("splice-linux-x86_64"),
         ("linux", "aarch64") => Some("splice-linux-aarch64"),
         ("macos", "x86_64") => Some("splice-macos-x86_64"),
+        ("macos", "aarch64") => Some("splice-macos-aarch64"),
         ("windows", "x86_64") => Some("splice-windows-x86_64.exe"),
         _ => None,
     }

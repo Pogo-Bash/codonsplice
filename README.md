@@ -34,22 +34,32 @@ both in a CLI + TUI.
 
 ## Install
 
+**Prebuilt binaries are the primary path** — Linux (x86_64/aarch64), macOS
+(Apple Silicon **and** Intel), and Windows all ship a native `splice` binary, so
+no Rust toolchain is needed.
+
 ```sh
-# Guided installer (Linux / macOS) — downloads the right prebuilt binary
+# Guided installer (Linux / macOS, incl. Apple Silicon) — downloads the
+# right prebuilt binary for your OS/arch; installs to ~/.local/bin (no sudo).
 curl -fsSL https://github.com/Pogo-Bash/codonsplice/releases/latest/download/install.sh | sh
 
-# npm (cross-platform; pulls the matching platform binary)
+# npm (cross-platform; pulls the matching platform binary, incl. darwin-arm64)
 npm install -g @codonsplice/cli
-
-# cargo (build from source)
-cargo install --git https://github.com/Pogo-Bash/codonsplice splice-cli
 
 # Windows (winget)
 winget install Pogo-Bash.CodonSplice
 ```
 
+> **Build from source — fallback only.** If no prebuilt binary fits your
+> platform, build it yourself. Run this as your **normal user, never under
+> `sudo`/root**, or a root-owned `~/.cargo`/`target/` will break later builds:
+>
+> ```sh
+> cargo install --git https://github.com/Pogo-Bash/codonsplice splice-cli
+> ```
+
 `splice update` self-updates to the latest release; `splice uninstall` removes
-it. Current release: **v0.1.8**.
+it. Current release: **v0.2.5**.
 
 ---
 

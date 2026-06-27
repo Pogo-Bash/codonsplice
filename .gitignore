@@ -10,4 +10,5 @@
 /pkg/cli-linux-x64/
 /pkg/cli-linux-arm64/
 /pkg/cli-darwin-x64/
+/pkg/cli-darwin-arm64/
 /pkg/cli-win32-x64/

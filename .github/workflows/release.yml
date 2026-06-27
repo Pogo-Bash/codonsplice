@@ -29,12 +29,27 @@ jobs:
             os: ubuntu-22.04
             asset: splice-linux-aarch64
             cross: true
+          # Both macOS targets are CROSS-COMPILED from Linux with cargo-zigbuild
+          # (Zig as the cross linker). GitHub's hosted macOS runners were the
+          # recurring blocker — the aarch64 leg in particular never finished
+          # reliably — so the whole matrix now runs on fast Linux runners with
+          # no macOS runner in the pipeline.
+          #
+          # No external macOS SDK is required: Zig ships the macOS `libSystem`
+          # stub libraries, and this crate tree is pure Rust with no Apple-
+          # framework dependencies (ureq uses rustls, noodles is pure Rust, no
+          # `-sys`/htslib crates), so libSystem alone satisfies the link. If a
+          # future dep pulls in a macOS framework (e.g. Security/CoreFoundation
+          # via native-tls), set SDKROOT to an extracted MacOSX SDK — see
+          # https://github.com/rust-cross/cargo-zigbuild#macos-universal2.
           - target: x86_64-apple-darwin
-            # Build on the Apple-Silicon runners (far better availability than
-            # the Intel macos-13 pool, which queues for hours). x86_64-apple-
-            # darwin is a first-class cross-target there via Xcode.
-            os: macos-latest
+            os: ubuntu-latest
             asset: splice-macos-x86_64
+            zig: true
+          - target: aarch64-apple-darwin
+            os: ubuntu-latest
+            asset: splice-macos-aarch64
+            zig: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             asset: splice-windows-x86_64.exe
@@ -51,7 +66,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      # Apple targets: Zig provides the cross linker + bundled macOS libSystem
+      # stubs, and cargo-zigbuild wires it into cargo for the apple targets.
+      - name: Install Zig + cargo-zigbuild (apple cross)
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+        with: { version: "0.13.0" }
+      - name: Install cargo-zigbuild (apple cross)
+        if: matrix.zig
+        run: cargo install --locked cargo-zigbuild
+      - name: Build (apple cross via zigbuild)
+        if: matrix.zig
+        run: cargo zigbuild --release --locked -p splice-cli --target ${{ matrix.target }}
       - name: Build
+        if: ${{ !matrix.zig }}
         run: cargo build --release --locked -p splice-cli --target ${{ matrix.target }}
       - name: Stage binary
         shell: bash
@@ -291,7 +319,7 @@ jobs:
         # publishes verbatim; restore it so the Unix binaries are runnable.
         run: |
           chmod +x pkg/cli/bin/splice || true
-          for d in cli-linux-x64 cli-linux-arm64 cli-darwin-x64; do
+          for d in cli-linux-x64 cli-linux-arm64 cli-darwin-x64 cli-darwin-arm64; do
             chmod +x "pkg/$d/bin/splice" || true
           done
       - name: Publish cli packages
@@ -301,7 +329,8 @@ jobs:
           # Platform packages first so the main package's optionalDependencies
           # already exist on the registry when someone installs @codonsplice/cli.
           for dir in pkg/cli-linux-x64 pkg/cli-linux-arm64 \
-                     pkg/cli-darwin-x64 pkg/cli-win32-x64 pkg/cli; do
+                     pkg/cli-darwin-x64 pkg/cli-darwin-arm64 \
+                     pkg/cli-win32-x64 pkg/cli; do
             [ -d "$dir" ] && (cd "$dir" && npm publish --access public) \
               || echo "skip $dir"
           done
