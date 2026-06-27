@@ -1,6 +1,6 @@
 [package]
 name = "codonsplice-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "CodonSplice engine — SpliceQL bytecode compiler, VM, and (Phase 4) cnvlens-core bridge"
 license = "MIT"
