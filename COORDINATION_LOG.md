@@ -157,7 +157,7 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 | multi-allelic | feat/multiallelic 0e0d83f (cnvlens 5524886, spliceql ef15948) | ✅ VERIFIED |
 | density-shards | feat/density f05e934 (+orch review fix) | ✅ VERIFIED |
 | PAIRED WITH | feat/paired 12be95d (spliceql c7216e9) | ✅ VERIFIED |
-| WASM workers | feat/wasm-threads (wt cs-wasm, on density) | 🟡 wave-2 agent running |
+| WASM workers | feat/wasm-threads 8cccdc9 | ✅ VERIFIED (honest landing) |
 
 ## DISK CRASH + recovery (logged): wave-1 agents died when the process exited (full-disk EROFS from target/ dirs at 90GB). User compacted the WSL vhdx, hand-committed all 4 wave-1 features on their feat/<name> branches with submodules branched (not detached) + pointers set. Disk now 889G free. Lesson reinforced: worktree target/ dirs are the disk risk — freed all 4 wave-1 targets after review.
 
@@ -169,7 +169,20 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 
 ## WAVE-2 review — PAIRED WITH ✅ VERIFIED (orchestrator re-ran)
 - Surface `FROM vcf "t" PAIRED WITH vcf "n" [MODE somatic|germline]` (default somatic). **Reuse confirmed STRUCTURALLY**: core commit = paired_tests.rs ONLY (no engine code); grammar lowers to the SAME IsecClause → reuses `cnvlens_core::vcf::isec` / OpenIsec. Oracle: `somatic_matches_bcftools_isec_private_tumor` PASS (ran live bcftools, no skip) — somatic==isec 0000.vcf, germline==0002.vcf, exact (chrom,pos,ref,alt) incl. 55249100 T-vs-C edge. spliceql c7216e9 on feat/paired (not detached).
-- WASM workers (cs-wasm): still running.
+- **WASM workers** ✅ VERIFIED (orchestrator re-ran the real wasm gate): native sharding STILL byte-identical after cfg-select (5 green); codonsplice-wasm compiles wasm32 (cfg excludes thread::scope); `wasm_executor_matches_serial_regardless_of_worker_count` PASS; **end-to-end real-.wasm-in-Node byte-identity PASS** — single + full plan→call→merge pipeline at 2/4/6 shards == native serial (crossOriginIsolated=false→fallback). HONEST GAP (authorized): parallel-in-browser COI execution built+compiling but NOT run (no headless COI browser); worker pool drives only proven-identical exports; manual steps in PARALLELISM_WASM.md §5. cnvlens/spliceql untouched.
+
+## ✅ PHASE 1 COMPLETE — 6/6 features built + oracle-verified by the orchestrator. Existing 4 tracks + parallel-CNV engine built. **PHASE 2 GATE OPEN.**
+
+## PHASE 2 integration topology (branch CHAINS simplify the merge):
+- SHARDING: `feat/wasm-threads` ⊇ `feat/density` ⊇ `wt/parallelism` (linear — take wasm-threads, has all sharding+density+wasm).
+- ANNOTATE+HGVS: `feat/hgvs` ⊇ `feat/annotate` (take hgvs).
+- ISEC+PAIRED: `feat/paired` ⊇ `feat/isec` (take paired).
+- CNV: `feat/call-cnv` (core) + cnvlens `feat/parallel-cnv` e11edd9 (engine).
+- SPLIT: `feat/multiallelic`. BASE: `feat/vcf-input-and-test-data` (Track 0).
+- **Shared Record enum**: only Cnv (call-cnv) + AnnotatedVariant (hgvs) add variants — additive union. isec/SPLIT/PAIRED produce Variant records (no new variant).
+- **cnvlens to MERGE** (3 branches touch vcf.rs/coverage.rs): feat/parallel-cnv (coverage.rs) + feat/isec (vcf.rs) + feat/multiallelic (vcf.rs). Each in a SEPARATE clone (cs-*/cnvlens).
+- **spliceql to MERGE** (grammar): feat/isec c34cada + feat/multiallelic ef15948 + feat/paired c7216e9 + ANNOTATE c247dad (HGVS added builtins in core, not grammar). Each in a separate clone.
+- vm.rs/compiler.rs conflict zones: CNV arm (call-cnv) | ANNOTATE+builtins (hgvs) | OpenIsec (paired) | SPLIT (multiallelic) | sharding producer+cfg (wasm-threads). Resolve as additive union per the integration plan.
 
 ## INTEGRATION pointer map (submodule branches live in separate clones — Phase-2 must gather them):
 - spliceql branches: feat/hgvs c247dad(builtins in core), feat/isec c34cada, feat/multiallelic ef15948, feat/paired c7216e9, feat/wasm-threads(pending), others ae6e0b9.
