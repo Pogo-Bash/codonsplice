@@ -97,9 +97,14 @@ Without it, `REF` is inferred as the pileup-majority base, which is correct only
 where one allele dominates: at balanced heterozygous sites it is a coin-flip
 (so ~half get `REF`/`ALT` backwards), and **homozygous** variants (where ~100%
 of reads differ from the reference) are invisible entirely, because the
-majority *is* the variant base. A reference is required for valid VCF and any
-truth-set concordance. The FASTA contig names must match the BAM's (e.g. `>7`
-↔ BAM `7`), and it should be a full-contig FASTA (positions are indexed from 1).
+majority *is* the variant base. A reference FASTA is therefore **required** to
+call **indels** and **homozygous** variants at all, required for valid VCF and
+truth-set concordance, and recommended for *every* variants query. The FASTA
+contig names must match the BAM's (e.g. `>7` ↔ BAM `7`), and it should be a
+full-contig FASTA (positions are indexed from 1). A reference may also be a
+region slice — the bundled `cnvlens/public/sample-data/EGFR_region.fa` sample
+slice pairs with the sample `NA12878_EGFR.bam` for reference-anchored calling
+out of the box (`splice create` drops both into the scaffolded app's `public/`).
 
 An unknown parameter is a compile error with a "did you mean" hint (Levenshtein +
 shared-token ranking over the known names):

@@ -78,6 +78,7 @@ pub fn cmd_run(file: &str, args: &[String]) -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
+    crate::warn_if_no_reference(query);
 
     match Vm::new(program).with_vars(vars).run() {
         Ok(VmOutput::Records(recs)) | Ok(VmOutput::Rows(recs)) => {

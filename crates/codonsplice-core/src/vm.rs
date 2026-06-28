@@ -1065,26 +1065,76 @@ fn collect_read_records(
         .collect())
 }
 
-/// Parse a (small) FASTA byte buffer into `name -> sequence`.
+/// Parse the contig name and 0-based genomic offset from a FASTA header token.
+///
+/// A `samtools faidx`-style region slice has a `contig:start-end` header (e.g.
+/// `>7:54990000-55300100`); the engine indexes the reference by *absolute*
+/// genomic position to match the BAM, so such a slice maps to contig `7` with
+/// the sequence offset to 0-based `start-1`. A plain `>7` (full contig) is offset
+/// 0. Returns `(contig, offset)`.
+fn parse_fasta_header(token: &str) -> (String, usize) {
+    if let Some((contig, range)) = token.rsplit_once(':') {
+        if let Some((start, end)) = range.split_once('-') {
+            let start = start.replace(',', "");
+            let end = end.replace(',', "");
+            if start.chars().all(|c| c.is_ascii_digit())
+                && end.chars().all(|c| c.is_ascii_digit())
+                && !start.is_empty()
+            {
+                if let Ok(s) = start.parse::<usize>() {
+                    if s >= 1 {
+                        return (contig.to_string(), s - 1);
+                    }
+                }
+            }
+        }
+    }
+    (token.to_string(), 0)
+}
+
+/// Parse a FASTA byte buffer into `contig -> sequence`, where the sequence is
+/// indexed by absolute 0-based genomic position. A `contig:start-end` region
+/// slice (from `samtools faidx`) is left-padded with `N` up to `start-1` so a
+/// small slice (e.g. ~300 KB over the EGFR region) stays coordinate-correct
+/// against the BAM — identical calls to the full-chromosome reference, without
+/// shipping the 161 MB chr7.fa. (The padding inflates a region slice in memory;
+/// a future optimization could offset-index in cnvlens-core to avoid it.)
 fn parse_fasta(bytes: &[u8]) -> HashMap<String, String> {
     let mut seqs = HashMap::new();
     let text = String::from_utf8_lossy(bytes);
     let mut name = String::new();
+    let mut offset: usize = 0;
     let mut seq = String::new();
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix('>') {
             if !name.is_empty() {
-                seqs.insert(std::mem::take(&mut name), std::mem::take(&mut seq));
+                let full = pad_to_offset(offset, std::mem::take(&mut seq));
+                seqs.insert(std::mem::take(&mut name), full);
             }
-            name = rest.split_whitespace().next().unwrap_or("").to_string();
+            let token = rest.split_whitespace().next().unwrap_or("");
+            let (contig, off) = parse_fasta_header(token);
+            name = contig;
+            offset = off;
         } else {
             seq.push_str(line.trim());
         }
     }
     if !name.is_empty() {
-        seqs.insert(name, seq);
+        seqs.insert(name, pad_to_offset(offset, seq));
     }
     seqs
+}
+
+/// Left-pad `seq` with `offset` `N` bases so it is indexed by absolute genomic
+/// position (offset 0 → unchanged).
+fn pad_to_offset(offset: usize, seq: String) -> String {
+    if offset == 0 {
+        return seq;
+    }
+    let mut full = String::with_capacity(offset + seq.len());
+    full.extend(std::iter::repeat('N').take(offset));
+    full.push_str(&seq);
+    full
 }
 
 fn format_header(refs: &[(String, usize)]) -> String {
@@ -1852,6 +1902,51 @@ fn call_builtin(name: &str, args: &[RuntimeValue], _pc: usize) -> Result<Runtime
             }
         }
         _ => Err(bad(format!("unknown function {name}()"))),
+    }
+}
+
+#[cfg(test)]
+mod fasta_tests {
+    use super::*;
+
+    #[test]
+    fn header_full_contig_is_offset_zero() {
+        assert_eq!(parse_fasta_header("7"), ("7".to_string(), 0));
+        // full chr7.fa header has trailing tokens; only the first is used upstream
+        assert_eq!(parse_fasta_header("7"), ("7".to_string(), 0));
+    }
+
+    #[test]
+    fn header_region_slice_offsets_to_start_minus_one() {
+        // samtools faidx style; start is 1-based, offset is 0-based start-1
+        assert_eq!(
+            parse_fasta_header("7:54990000-55300100"),
+            ("7".to_string(), 54989999)
+        );
+        assert_eq!(parse_fasta_header("chrX:100-200"), ("chrX".to_string(), 99));
+    }
+
+    #[test]
+    fn header_non_region_colon_is_not_treated_as_offset() {
+        // a colon without a numeric start-end range → whole token is the contig
+        assert_eq!(parse_fasta_header("HLA:weird"), ("HLA:weird".to_string(), 0));
+    }
+
+    #[test]
+    fn region_slice_is_coordinate_correct() {
+        // A 2-base region at 1-based 5-6 → the bases land at 0-based indices 4,5.
+        let fasta = b">7:5-6\nAC\n";
+        let seqs = parse_fasta(fasta);
+        let seq = seqs.get("7").expect("contig 7");
+        assert_eq!(seq.len(), 6); // padded to absolute coordinates
+        assert_eq!(&seq[4..6], "AC"); // base at 1-based pos 5 (0-based 4) == 'A'
+        assert!(seq[..4].chars().all(|c| c == 'N')); // leading padding
+    }
+
+    #[test]
+    fn full_contig_unpadded() {
+        let seqs = parse_fasta(b">7\nACGT\n");
+        assert_eq!(seqs.get("7").map(String::as_str), Some("ACGT"));
     }
 }
 

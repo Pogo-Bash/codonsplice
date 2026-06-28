@@ -144,11 +144,42 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// Emit a non-fatal notice to STDERR when a `CALL variants` query has no
+/// `reference` WITH-param, so users know REF/ALT are inferred from reads and
+/// indels + homozygous variants are not called. Best-effort: it inspects the
+/// parsed AST and stays silent for non-variants CALLs, when a reference is
+/// present, or if the source doesn't parse (the compiler reports those errors).
+pub fn warn_if_no_reference(source: &str) {
+    let Ok(query) = spliceql::parse(source) else {
+        return;
+    };
+    let is_variants = query
+        .call
+        .as_ref()
+        .is_some_and(|c| c.operation == "variants");
+    if !is_variants {
+        return;
+    }
+    let has_reference = query
+        .with
+        .as_ref()
+        .is_some_and(|w| w.iter().any(|(k, _)| k == "reference"));
+    if has_reference {
+        return;
+    }
+    eprintln!(
+        "note: no reference provided — REF/ALT inferred from reads; homozygous \
+         variants and indels are NOT called. Pass WITH reference=\"...fa\" for \
+         reference-anchored calling."
+    );
+}
+
 fn cmd_query(source: &str) -> std::process::ExitCode {
     let program = match compile(source) {
         Ok(p) => p,
         Err(e) => return fail_with(source, &e),
     };
+    warn_if_no_reference(source);
     let bytes = program.code.len();
     match Vm::new(program).run() {
         Ok(VmOutput::Ready(_)) => {

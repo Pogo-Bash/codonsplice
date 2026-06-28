@@ -294,6 +294,11 @@ fn run_with_spinner(label: &str, prog: &str, args: &[String], cwd: Option<&Path>
 const SAMPLE_BAM_URL: &str =
     "https://raw.githubusercontent.com/Pogo-Bash/cnvlens/master/public/sample-data/NA12878_EGFR.bam";
 
+/// The bundled reference slice (EGFR region of chr7), embedded at build time so
+/// the preloaded query can do reference-anchored variant calling (indels +
+/// homozygous sites) with no network fetch. Mirrors the sample BAM's contig.
+const SAMPLE_REF: &[u8] = include_bytes!("../../../cnvlens/public/sample-data/EGFR_region.fa");
+
 /// Download the sample BAM into `<root>/public/` so the preloaded query runs out
 /// of the box (Vite/Astro serve `public/` at the site root).
 fn download_sample_bam(root: &Path) {
@@ -318,6 +323,24 @@ fn download_sample_bam(root: &Path) {
         Ok(()) => println!("{GREEN}✓{RESET} {label}"),
         Err(e) => println!(
             "{RED}⚠{RESET} {label} failed ({e}) — add public/NA12878_EGFR.bam manually."
+        ),
+    }
+}
+
+/// Write the embedded reference slice into `<root>/public/` so the preloaded
+/// query can call indels + homozygous variants out of the box. Local write (the
+/// bytes are baked into the binary), so no network/spinner needed.
+fn write_sample_ref(root: &Path) {
+    let result = (|| -> Result<(), String> {
+        let dir = root.join("public");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("EGFR_region.fa"), SAMPLE_REF).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => println!("{GREEN}✓{RESET} Bundled sample reference (EGFR_region.fa)"),
+        Err(e) => println!(
+            "{RED}⚠{RESET} could not write public/EGFR_region.fa ({e}) — add it manually."
         ),
     }
 }
@@ -397,6 +420,7 @@ fn scaffold(fw: Framework, name: &str) -> ExitCode {
 
     // 4. Bundle the sample BAM so the preloaded query runs out of the box.
     download_sample_bam(root);
+    write_sample_ref(root);
 
     // 5. Install dependencies (the wrapper + its wasm core).
     if !run_with_spinner("Installing dependencies", npm(), &["install".to_string()], Some(root)) {
@@ -864,11 +888,11 @@ import './splice-demo.css'
 
 const QUERY = `FROM bam "NA12878_EGFR.bam"
 WHERE chr = "7"
-  AND depth > 20
 CALL variants
-WITH min_af = 0.05,
-     min_depth = 10
-LIMIT 5`
+WITH reference = "EGFR_region.fa",
+     min_depth = 2,
+     min_variant_reads = 2
+LIMIT 12`
 
 const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v))
 
@@ -889,11 +913,13 @@ export default function App() {
 
   useEffect(() => {
     let on = true
-    fetch('/NA12878_EGFR.bam')
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
+    Promise.all([
+      fetch('/NA12878_EGFR.bam').then((r) => r.arrayBuffer()),
+      fetch('/EGFR_region.fa').then((r) => r.arrayBuffer()),
+    ])
+      .then(([bam, ref]) => {
         if (!on) return
-        const f = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
+        const f = { 'NA12878_EGFR.bam': new Uint8Array(bam), 'EGFR_region.fa': new Uint8Array(ref) }
         setFiles(f)
         execute({ query: QUERY, files: f }).catch(() => {})
       })
@@ -995,11 +1021,11 @@ import './splice-demo.css'
 
 const QUERY = `FROM bam "NA12878_EGFR.bam"
 WHERE chr = "7"
-  AND depth > 20
 CALL variants
-WITH min_af = 0.05,
-     min_depth = 10
-LIMIT 5`
+WITH reference = "EGFR_region.fa",
+     min_depth = 2,
+     min_variant_reads = 2
+LIMIT 12`
 
 const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v))
 
@@ -1024,8 +1050,9 @@ const paneText = computed(() =>
 onMounted(async () => {
   editor = mountEditor(host.value, { doc: QUERY, onChange: (v) => { query.value = v } })
   try {
-    const buf = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
-    files.value = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
+    const bam = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
+    const ref = await (await fetch('/EGFR_region.fa')).arrayBuffer()
+    files.value = { 'NA12878_EGFR.bam': new Uint8Array(bam), 'EGFR_region.fa': new Uint8Array(ref) }
     await execute({ query: QUERY, files: files.value })
   } catch (e) { /* idle if missing */ }
 })
@@ -1111,11 +1138,11 @@ const SVELTE_DEMO: &str = r##"<script>
 
   const QUERY = `FROM bam "NA12878_EGFR.bam"
 WHERE chr = "7"
-  AND depth > 20
 CALL variants
-WITH min_af = 0.05,
-     min_depth = 10
-LIMIT 5`
+WITH reference = "EGFR_region.fa",
+     min_depth = 2,
+     min_variant_reads = 2
+LIMIT 12`
 
   const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v))
 
@@ -1132,8 +1159,9 @@ LIMIT 5`
   onMount(async () => {
     editor = mountEditor(host, { doc: QUERY, onChange: (v) => { query = v } })
     try {
-      const buf = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
-      files = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
+      const bam = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
+      const ref = await (await fetch('/EGFR_region.fa')).arrayBuffer()
+      files = { 'NA12878_EGFR.bam': new Uint8Array(bam), 'EGFR_region.fa': new Uint8Array(ref) }
       await execute({ query: QUERY, files })
     } catch (e) { /* idle if missing */ }
   })
@@ -1278,7 +1306,7 @@ import '../splice-demo.css'
       const viewSel = $('view'), paneEl = $('pane')
       const fmt = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v))
 
-      let query = `FROM bam "NA12878_EGFR.bam"\nWHERE chr = "7"\n  AND depth > 20\nCALL variants\nWITH min_af = 0.05,\n     min_depth = 10\nLIMIT 5`
+      let query = `FROM bam "NA12878_EGFR.bam"\nWHERE chr = "7"\nCALL variants\nWITH reference = "EGFR_region.fa",\n     min_depth = 2,\n     min_variant_reads = 2\nLIMIT 12`
       let files = null
       let bytecode = '', astText = '', lastResult = null
 
@@ -1326,8 +1354,9 @@ import '../splice-demo.css'
       runBtn.addEventListener('click', run)
       ;(async () => {
         try {
-          const buf = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
-          files = { 'NA12878_EGFR.bam': new Uint8Array(buf) }
+          const bam = await (await fetch('/NA12878_EGFR.bam')).arrayBuffer()
+          const ref = await (await fetch('/EGFR_region.fa')).arrayBuffer()
+          files = { 'NA12878_EGFR.bam': new Uint8Array(bam), 'EGFR_region.fa': new Uint8Array(ref) }
           runBtn.disabled = false; runBtn.textContent = '▶ Run'; run()
         } catch (e) { runBtn.textContent = 'BAM not found' }
       })()
