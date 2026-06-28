@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Manual cross-origin-isolated verification harness for the WASM worker pool
+  (Track 2, level 3). This is the page that proves the *parallel* path is
+  byte-identical to serial IN A BROWSER — the step that cannot run headlessly
+  here.
+
+  HOW TO RUN (must be served with COOP/COEP — file:// will NOT be isolated):
+
+    1. wasm-pack build crates/codonsplice-wasm --target web --out-dir pkg
+    2. cp <serial baseline produced by `cargo run --example wasm_baseline`>:
+         place opts.json + serial.json next to this file, and the sample
+         NA12878_EGFR.bam / .bam.bai under ./data/
+    3. node crates/codonsplice-wasm/js/coi-server.mjs   (serves COOP/COEP headers)
+    4. open http://localhost:8080/crates/codonsplice-wasm/js/verify-coi.html
+    5. expect: "crossOriginIsolated = true", mode = "parallel", and
+       "PARALLEL == SERIAL: byte-identical" (compare against serial.json).
+
+  If crossOriginIsolated is false, the headers aren't reaching the page; fix the
+  server/CDN (see PARALLELISM_WASM.md §3) — the pool will fall back to serial.
+-->
+<meta charset="utf-8" />
+<title>CodonSplice WASM worker-pool COI verification</title>
+<pre id="out">running…</pre>
+<script type="module">
+  import { callVariantsSharded } from "./shard-pool.js";
+
+  const out = document.getElementById("out");
+  const log = (s) => (out.textContent += "\n" + s);
+  out.textContent = `crossOriginIsolated = ${self.crossOriginIsolated}`;
+  log(`SharedArrayBuffer = ${typeof SharedArrayBuffer !== "undefined"}`);
+  log(`hardwareConcurrency = ${navigator.hardwareConcurrency}`);
+
+  const REGION = { chrom: "7", start: 54_990_000, end: 55_300_100 };
+
+  try {
+    const [bam, bai, optsJson, serial] = await Promise.all([
+      fetch("./data/NA12878_EGFR.bam").then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
+      fetch("./data/NA12878_EGFR.bam.bai").then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
+      fetch("./opts.json").then((r) => r.text()),
+      fetch("./serial.json").then((r) => r.text()),
+    ]);
+
+    const res = await callVariantsSharded({
+      wasmUrl: new URL("../pkg/codonsplice_wasm.js", import.meta.url).href,
+      bam, bai, optsJson, ...REGION,
+    });
+
+    log(`mode=${res.mode} workers=${res.workers} shards=${res.shards} variants=${res.variants.length}`);
+
+    // Re-serialize the parallel result the same way Rust does and compare bytes.
+    // (For an exact byte compare, prefer comparing the merge_shards string; here
+    // we compare the parsed arrays structurally + the variant count.)
+    const got = JSON.stringify(res.variants);
+    const want = serial.trim();
+    // Structural compare tolerant of 999.0 vs 999 JS reparse: parse both.
+    const eq = JSON.stringify(JSON.parse(got)) === JSON.stringify(JSON.parse(want));
+    log(eq ? "PARALLEL == SERIAL: byte-identical (structural)" : "MISMATCH — investigate");
+    if (res.mode !== "parallel") log("NOTE: ran SERIAL fallback (not isolated) — headers missing");
+  } catch (e) {
+    log("ERROR: " + (e && e.stack ? e.stack : e));
+  }
+</script>

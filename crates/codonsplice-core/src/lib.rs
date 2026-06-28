@@ -27,6 +27,7 @@ pub mod bytecode;
 pub mod compiler;
 pub mod materialize;
 pub mod runtime;
+pub mod shard;
 pub mod vm;
 
 pub use compiler::{

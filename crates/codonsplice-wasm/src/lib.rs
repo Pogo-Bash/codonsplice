@@ -233,6 +233,187 @@ impl Default for CodonSplice {
     }
 }
 
+// ── Region-sharded parallelism (Track 2) — the WASM worker-pool seam ──────────
+//
+// The boundary-correct sharding *brain* (`split_region`, the inclusive clamp,
+// shard-ordered concat) lives in `codonsplice-core::shard` and is reused
+// verbatim here. None of that logic is re-implemented; these exports just make
+// the brain callable from JS so the worker pool (`js/shard-pool.js`) can:
+//
+//   1. ask `shard_parallelism()` how many workers to use (1 ⇒ pure serial),
+//   2. `plan_shards(...)` to get boundary-correct, density-aware shard bounds,
+//   3. fan each shard out to a worker that calls `call_variants_region(...)`
+//      over the SAME SharedArrayBuffer-backed BAM/BAI bytes, then
+//   4. `merge_shards(...)` to clamp+concat in shard order on the main thread.
+//
+// Single-thread fallback (no `crossOriginIsolated`/SAB) is load-bearing: JS gets
+// `shard_parallelism() == 1`, asks for 1 shard, and calls `call_variants_region`
+// once over the whole region — byte-identical to the native serial result.
+
+use codonsplice_core::shard::{split_region_bai, Shard};
+
+/// Read a property off the JS global (`self`), context-agnostic (works on both
+/// the main thread `Window` and inside a `WorkerGlobalScope`).
+fn global_get(key: &str) -> Option<JsValue> {
+    js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str(key)).ok()
+}
+
+/// Whether this context is **cross-origin isolated** — the browser gate for
+/// `SharedArrayBuffer` (and therefore WASM worker threads). True only when the
+/// host served `Cross-Origin-Opener-Policy: same-origin` and
+/// `Cross-Origin-Embedder-Policy: require-corp`. Also requires `SharedArrayBuffer`
+/// to actually be defined. When false, the engine runs single-threaded.
+#[wasm_bindgen]
+pub fn crossorigin_isolated() -> bool {
+    let coi = global_get("crossOriginIsolated").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_sab = global_get("SharedArrayBuffer").map(|v| !v.is_undefined()).unwrap_or(false);
+    coi && has_sab
+}
+
+/// The parallelism to plan shards for: `navigator.hardwareConcurrency` when the
+/// context is cross-origin isolated (so SAB-backed workers are available),
+/// otherwise **1** (serial). This is exactly the `available` argument
+/// `plan_shard_count` expects — passing 1 transparently forces the serial path.
+#[wasm_bindgen]
+pub fn shard_parallelism() -> usize {
+    if !crossorigin_isolated() {
+        return 1;
+    }
+    global_get("navigator")
+        .and_then(|nav| js_sys::Reflect::get(&nav, &JsValue::from_str("hardwareConcurrency")).ok())
+        .and_then(|v| v.as_f64())
+        .map(|n| (n as usize).max(1))
+        .unwrap_or(1)
+}
+
+/// Plan the boundary-correct shard split for an inclusive region `[start, end]`
+/// on `chrom`, balanced by BAI read density. Returns a JSON array of shard
+/// descriptors `[{ "index", "chrom", "start", "end" }, ...]` (1-based inclusive
+/// bounds, no gap, no overlap). When `available <= 1` or the span is below the
+/// `MIN_SHARD_SPAN` floor, this returns a single shard covering the whole
+/// region — the serial plan. `bai` may be empty (`Uint8Array(0)`); density then
+/// falls back to a uniform split.
+#[wasm_bindgen]
+pub fn plan_shards(
+    chrom: &str,
+    start: f64,
+    end: f64,
+    available: usize,
+    bam: &[u8],
+    bai: &[u8],
+) -> String {
+    let (start, end) = (start as i64, end as i64);
+    let n = codonsplice_core::shard::plan_shard_count(end - start + 1, available);
+    let shards = if n <= 1 || bai.is_empty() {
+        codonsplice_core::shard::split_region(chrom, start, end, n)
+    } else {
+        split_region_bai(chrom, start, end, n, bam, bai)
+    };
+    serde_json::to_string(
+        &shards
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "index": s.index,
+                    "chrom": s.chrom,
+                    "start": s.start,
+                    "end": s.end,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string())
+}
+
+/// SNV variant calling restricted to the inclusive region `[start, end]` on
+/// `chrom` — the per-shard producer a worker runs. `opts_json` is the snake_case
+/// `VariantOptions` JSON (same shape the existing `call_variants` export takes).
+/// Returns a JSON array of variants (sorted by position), or `{ "error": ... }`.
+///
+/// This is the exact function the JS worker pool re-enters once per shard; the
+/// pileup over `[start, end]` is identical to the matching slice of the serial
+/// whole-region pileup (BAI over-fetch is dropped by `merge_shards`'s clamp).
+#[wasm_bindgen]
+pub fn call_variants_region(
+    bam: &[u8],
+    bai: &[u8],
+    chrom: &str,
+    start: f64,
+    end: f64,
+    opts_json: &str,
+) -> String {
+    use cnvlens_core::model::{Region, VariantOptions};
+    let opts: VariantOptions = match serde_json::from_str(opts_json) {
+        Ok(o) => o,
+        Err(e) => return format!("{{\"error\":\"bad options: {e}\"}}"),
+    };
+    let region = Region::with_bounds(chrom, Some(start as i64), Some(end as i64));
+    match cnvlens_core::variants::call_variants_region(bam, bai, &region, &opts) {
+        Ok(vars) => serde_json::to_string(&vars).unwrap_or_else(|_| "[]".to_string()),
+        Err(e) => format!("{{\"error\":\"{e}\"}}"),
+    }
+}
+
+/// Boundary-correct merge of per-shard variant results — the JS-callable mirror
+/// of `codonsplice-core::shard::shard_and_merge`'s clamp+concat. `results_json`
+/// is a JSON array of **strings**, where the `i`-th string is the raw JSON the
+/// worker for shard `i` returned from [`call_variants_region`] (in shard order);
+/// `shards_json` is the matching [`plan_shards`] output.
+///
+/// Passing the per-shard outputs as un-parsed strings is deliberate: it keeps the
+/// number reparse inside Rust's `serde_json` so a float like `999.0` survives as
+/// `999.0`. (Round-tripping through JavaScript's `JSON.parse`/`stringify` would
+/// silently collapse it to `999`, breaking byte-identity.)
+///
+/// Each variant is kept only if its `pos` lands inside its shard's inclusive
+/// bounds (so a feature the BAI over-fetched at a boundary is emitted by exactly
+/// one shard — not dropped, not duplicated), then arrays are concatenated in
+/// shard order. The result is byte-identical to a single serial
+/// [`call_variants_region`] over the whole region.
+#[wasm_bindgen]
+pub fn merge_shards(results_json: &str, shards_json: &str) -> String {
+    let result_strs: Vec<String> = match serde_json::from_str(results_json) {
+        Ok(r) => r,
+        Err(e) => return format!("{{\"error\":\"bad results: {e}\"}}"),
+    };
+    let mut results: Vec<Vec<serde_json::Value>> = Vec::with_capacity(result_strs.len());
+    for s in &result_strs {
+        match serde_json::from_str(s) {
+            Ok(v) => results.push(v),
+            Err(e) => return format!("{{\"error\":\"bad shard result: {e}\"}}"),
+        }
+    }
+    let shards: Vec<Shard> = match serde_json::from_str::<Vec<serde_json::Value>>(shards_json) {
+        Ok(arr) => arr
+            .into_iter()
+            .map(|v| Shard {
+                index: v.get("index").and_then(|x| x.as_u64()).unwrap_or(0) as usize,
+                chrom: v.get("chrom").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                start: v.get("start").and_then(|x| x.as_i64()).unwrap_or(0),
+                end: v.get("end").and_then(|x| x.as_i64()).unwrap_or(0),
+            })
+            .collect(),
+        Err(e) => return format!("{{\"error\":\"bad shards: {e}\"}}"),
+    };
+    if results.len() != shards.len() {
+        return format!(
+            "{{\"error\":\"results/shards length mismatch: {} vs {}\"}}",
+            results.len(),
+            shards.len()
+        );
+    }
+    let mut merged: Vec<serde_json::Value> = Vec::new();
+    for (shard, vars) in shards.iter().zip(results.into_iter()) {
+        for v in vars {
+            let pos = v.get("pos").and_then(|p| p.as_i64()).unwrap_or(i64::MIN);
+            if shard.contains(pos) {
+                merged.push(v);
+            }
+        }
+    }
+    serde_json::to_string(&merged).unwrap_or_else(|_| "[]".to_string())
+}
+
 // ── AST pretty-printer (shared shape with the CLI's TUI AST view) ─────────────
 use spliceql::ast::{BinOp, Expr, Query, UnaryOp};
 

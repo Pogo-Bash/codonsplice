@@ -11,10 +11,18 @@ crate-type = ["cdylib"]
 [dependencies]
 codonsplice-core = { path = "../codonsplice-core" }
 spliceql = { path = "../spliceql" }
+# Track 2 WASM sharding: the per-shard `call_variants_region` export calls the
+# genomic backend directly (same crate codonsplice-core links, so no version
+# skew) and reuses its `Region`/`VariantOptions` models.
+cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core" }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-serde_json = "1"
+# preserve_order: merge_shards round-trips per-shard variants through
+# serde_json::Value, so object key order must be preserved (insertion order) to
+# stay byte-identical to the struct-ordered serial output. Same feature
+# codonsplice-core/cnvlens-core enable.
+serde_json = { version = "1", features = ["preserve_order"] }
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["File", "FileReader", "Blob"] }
 console_error_panic_hook = "0.1"
