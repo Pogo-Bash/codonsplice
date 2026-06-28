@@ -92,3 +92,13 @@ All four landed honestly-verified. Each on its own local branch; **not integrate
 2. **Verify the integrated build under wasm-pack** (CNV + ANNOTATE + sharding-fallback).
 3. **Version/publish dance** (when ready): codonsplice-core bumps (FROM-vcf fix + Record kinds + sharding + annotate join all live there); spliceql bumps + republish (ANNOTATE grammar — it's published on crates.io); push both submodule branches first, then pointer bumps, then tag. cnvlens-core unchanged → idempotent skip (0.4.1 automation).
 4. **Follow-ups**: aa_change/HGVS translation; density-aware shard split; dbSNP/gnomAD slices; an amplified-tumor BAM for CNV amp-sensitivity; gate the v0.4.2 no-ref warning to FROM bam only.
+
+
+---
+
+## NEXT SESSION (queued, not started) — Integration + Ship
+Per the user: **integration is its own session** — done in dependency order with the byte-identical gate extended, then ship. Plan: `docs/superpowers/plans/2026-06-28-integration-and-ship.md`.
+- Merge order: Track 0 base → Track 3 (Cnv) → Track 1 (AnnotatedVariant + spliceql c247dad) → Track 2 (sharding last, cross-cutting). The two Record-enum extenders resolved together; all conflicts are ADDITIVE unions (exact resolution code in the plan).
+- The real work = Task 5: prove CALL cnv + ANNOTATE serial==sharded (or honestly route CNV serial-only if depth-segmentation isn't shard-safe at seams — boundary class #20). This is the "CALL cnv under sharding" gap, closed honestly.
+- Guarded hazard: Track 2 edits `records_to_vcf` where Track 0's ID/FILTER fix lives → explicit preserve+re-test step.
+- Ship (Task 7) is GATED on explicit user approval. Submodule push order: spliceql first (published on crates.io), then codonsplice-core; cnvlens-core unchanged → idempotent skip.
