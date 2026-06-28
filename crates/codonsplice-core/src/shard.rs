@@ -106,6 +106,231 @@ pub fn split_region(chrom: &str, start: i64, end: i64, n: usize) -> Vec<Shard> {
     shards
 }
 
+/// A cheap per-window estimate of how much *work* (read density) a region
+/// carries, used to place shard cuts on equal **work** rather than equal
+/// coordinate span. `weights[i]` is the estimated work for the genomic window
+/// `[first_window_start + i*window_size, first_window_start + (i+1)*window_size - 1]`
+/// (1-based, inclusive). The unit of `weights` is arbitrary and only relative
+/// magnitudes matter — the BAI estimator uses *compressed BGZF bytes per 16 kb
+/// linear-index window*, a direct proxy for reads-per-window that needs zero
+/// read scanning.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DensityProfile {
+    /// Genomic span (in positions) each weight covers. For the BAI linear index
+    /// this is 16384.
+    pub window_size: i64,
+    /// 1-based genomic position where `weights[0]`'s window begins.
+    pub first_window_start: i64,
+    /// Per-window work estimate.
+    pub weights: Vec<u64>,
+}
+
+impl DensityProfile {
+    /// Work estimate (interpolated, positions assumed uniformly weighted within a
+    /// window) for the inclusive coordinate range `[lo, hi]`.
+    pub fn weight_in(&self, lo: i64, hi: i64) -> f64 {
+        if hi < lo || self.window_size <= 0 || self.weights.is_empty() {
+            return 0.0;
+        }
+        let per = |w: usize| self.weights.get(w).copied().unwrap_or(0) as f64 / self.window_size as f64;
+        let start = lo.max(self.first_window_start);
+        if hi < start {
+            return 0.0; // entirely before the first window -> zero work
+        }
+        let w_first = ((start - self.first_window_start) / self.window_size) as usize;
+        let w_last = ((hi - self.first_window_start) / self.window_size) as usize;
+        let mut total = 0.0;
+        for w in w_first..=w_last {
+            let win_lo = self.first_window_start + w as i64 * self.window_size;
+            let win_hi = win_lo + self.window_size - 1;
+            let clamp_lo = win_lo.max(start);
+            let clamp_hi = win_hi.min(hi);
+            if clamp_hi >= clamp_lo {
+                total += per(w) * (clamp_hi - clamp_lo + 1) as f64;
+            }
+        }
+        total
+    }
+
+    /// The smallest 1-based position `p` in `[start, end]` whose cumulative work
+    /// from `start` reaches `target`. Cuts are placed by inverting the cumulative
+    /// work curve here. Returns `end` if `target` exceeds the total.
+    fn pos_at_cumulative(&self, start: i64, end: i64, target: f64) -> i64 {
+        if target <= 0.0 {
+            return start;
+        }
+        let per = |w: usize| self.weights.get(w).copied().unwrap_or(0) as f64 / self.window_size as f64;
+        let scan_start = start.max(self.first_window_start);
+        if end < scan_start {
+            return end;
+        }
+        let w_first = ((scan_start - self.first_window_start) / self.window_size) as usize;
+        let w_last = ((end - self.first_window_start) / self.window_size) as usize;
+        let mut acc = 0.0;
+        for w in w_first..=w_last {
+            let win_lo = self.first_window_start + w as i64 * self.window_size;
+            let win_hi = win_lo + self.window_size - 1;
+            let lo = win_lo.max(start);
+            let hi = win_hi.min(end);
+            if hi < lo {
+                continue;
+            }
+            let per_pos = per(w);
+            let win_weight = per_pos * (hi - lo + 1) as f64;
+            if per_pos > 0.0 && acc + win_weight >= target {
+                let need = target - acc;
+                // Number of positions into this window to cover `need`.
+                let k = (need / per_pos).ceil() as i64;
+                return (lo + k - 1).clamp(lo, hi);
+            }
+            acc += win_weight;
+        }
+        end
+    }
+
+    /// Total work over `[start, end]`.
+    fn total_weight(&self, start: i64, end: i64) -> f64 {
+        self.weight_in(start, end)
+    }
+}
+
+/// Density-aware analogue of [`split_region`]: partitions `[start, end]` into `n`
+/// boundary-correct shards whose **estimated work is balanced** (equal read
+/// density) rather than equal coordinate span. Cut points are placed where the
+/// cumulative work curve from `profile` crosses `k/n` of the total.
+///
+/// Honours the exact same boundary contract as [`split_region`] (no gap, no
+/// overlap, `shards[0].start == start`, `shards.last().end == end`, every
+/// position in exactly one shard). When the profile carries no usable signal
+/// (empty or all-zero weights), this falls back to a uniform [`split_region`],
+/// so a missing/degenerate index can never change correctness — only speed.
+pub fn split_region_density(
+    chrom: &str,
+    start: i64,
+    end: i64,
+    n: usize,
+    profile: &DensityProfile,
+) -> Vec<Shard> {
+    let span = end - start + 1;
+    let n = n.max(1).min(span.max(1) as usize);
+    if n <= 1 || start >= end {
+        return vec![Shard {
+            index: 0,
+            chrom: chrom.to_string(),
+            start,
+            end,
+        }];
+    }
+
+    let total = profile.total_weight(start, end);
+    if total <= 0.0 {
+        // No density signal — uniform split is the honest fallback.
+        return split_region(chrom, start, end, n);
+    }
+
+    // Place n-1 interior cuts. cut[k] is the INCLUSIVE end of shard k. Each cut is
+    // clamped so every shard stays non-empty (boundary discipline): shard k needs
+    // room on both sides, so cut[k] in [start+k-1, end-(n-k)] and strictly above
+    // the previous cut.
+    let mut cuts = Vec::with_capacity(n - 1);
+    let mut prev = start - 1;
+    for k in 1..n {
+        let target = total * k as f64 / n as f64;
+        let raw = profile.pos_at_cumulative(start, end, target);
+        let lo_bound = (start + k as i64 - 1).max(prev + 1);
+        let hi_bound = end - (n as i64 - k as i64);
+        let c = raw.clamp(lo_bound, hi_bound);
+        cuts.push(c);
+        prev = c;
+    }
+
+    let mut shards = Vec::with_capacity(n);
+    let mut lo = start;
+    for i in 0..n {
+        let hi = if i + 1 < n { cuts[i] } else { end };
+        shards.push(Shard {
+            index: i,
+            chrom: chrom.to_string(),
+            start: lo,
+            end: hi,
+        });
+        lo = hi + 1;
+    }
+    debug_assert_eq!(shards.first().unwrap().start, start);
+    debug_assert_eq!(shards.last().unwrap().end, end);
+    shards
+}
+
+/// The genomic span (bp) each BAI linear-index entry covers — fixed by the
+/// SAM/BAM spec at 16 kb.
+pub const BAI_WINDOW_SIZE: i64 = 1 << 14;
+
+/// Estimate per-window read density over `chrom` from the **BAI linear index**,
+/// without scanning a single read.
+///
+/// The BAI linear index stores one BGZF *virtual offset* per 16 kb window: the
+/// file offset of the first record that overlaps that window. The
+/// **compressed-byte delta** between consecutive window offsets is the volume of
+/// BGZF data whose records begin in that window — a cheap, monotone proxy for
+/// reads-per-window (denser pileups ⇒ more bytes). This is the "use the .bai
+/// linear index to approximate per-region density cheaply" path.
+///
+/// Returns `None` — and the caller falls back to a uniform split, never a wrong
+/// answer — when the header or index can't be parsed, the chromosome is absent,
+/// or the index has too few windows to carry a signal.
+pub fn estimate_density_from_bai(bam: &[u8], bai: &[u8], chrom: &str) -> Option<DensityProfile> {
+    let header = cnvlens_core::bam::read_header(bam).ok()?;
+    let target = chrom.as_bytes();
+    let ref_id = header.reference_sequences().keys().position(|k| {
+        let name: &[u8] = k.as_ref();
+        name == target
+    })?;
+
+    let index = cnvlens_core::bam::read_bai_index(bai).ok()?;
+    let ref_seq = index.reference_sequences().get(ref_id)?;
+    let linear = ref_seq.index(); // &Vec<bgzf::VirtualPosition>, one per 16 kb window
+    if linear.len() < 2 {
+        return None; // not enough windows to balance anything
+    }
+
+    let mut weights = Vec::with_capacity(linear.len());
+    for pair in linear.windows(2) {
+        // Compressed-offset delta == BGZF bytes for records starting in this
+        // window. Saturating: virtual offsets are monotone, but never trust it.
+        weights.push(pair[1].compressed().saturating_sub(pair[0].compressed()));
+    }
+    // The final window has no successor offset; reuse the previous window's weight
+    // so a dense tail isn't biased toward zero work.
+    if let Some(&last) = weights.last() {
+        weights.push(last);
+    }
+
+    Some(DensityProfile {
+        window_size: BAI_WINDOW_SIZE,
+        first_window_start: 1, // linear window i covers 1-based [i*16384+1, (i+1)*16384]
+        weights,
+    })
+}
+
+/// Density-aware region split driven by a real BAM+BAI: estimate read density
+/// from the BAI linear index ([`estimate_density_from_bai`]) and place cuts on
+/// equal work ([`split_region_density`]). Falls back to the uniform
+/// [`split_region`] when no density signal is available, so correctness never
+/// depends on the index — only the load balance does.
+pub fn split_region_bai(
+    chrom: &str,
+    start: i64,
+    end: i64,
+    n: usize,
+    bam: &[u8],
+    bai: &[u8],
+) -> Vec<Shard> {
+    match estimate_density_from_bai(bam, bai, chrom) {
+        Some(profile) => split_region_density(chrom, start, end, n, &profile),
+        None => split_region(chrom, start, end, n),
+    }
+}
+
 /// Minimum region span (count of inclusive positions) worth sharding. Below
 /// this, the per-shard BAI re-seek + thread-spawn overhead outweighs the
 /// parallelism win. Measured on the EGFR sample: a ~310kb region is a ~100ms
@@ -322,6 +547,100 @@ mod tests {
             v.push(V { pos: p });
         }
         Ok(v)
+    }
+
+    #[test]
+    fn density_split_partitions_cleanly_like_uniform() {
+        // A flat profile must reproduce a valid partition and stay boundary-correct.
+        let profile = DensityProfile {
+            window_size: 10,
+            first_window_start: 1,
+            weights: vec![5; 10], // [1..100], uniform
+        };
+        let shards = split_region_density("7", 1, 100, 4, &profile);
+        assert_eq!(shards.len(), 4);
+        assert_partition(&shards, 1, 100);
+    }
+
+    #[test]
+    fn density_split_shifts_cut_toward_heavy_region() {
+        // 10 windows over [1..100]; window 9 (positions 91..100) is 1000x denser.
+        // A 2-way density split must give the heavy tail a MUCH narrower coordinate
+        // span than the uniform 50/50 split would.
+        let mut weights = vec![1u64; 10];
+        weights[9] = 1000;
+        let profile = DensityProfile {
+            window_size: 10,
+            first_window_start: 1,
+            weights,
+        };
+        let shards = split_region_density("7", 1, 100, 2, &profile);
+        assert_eq!(shards.len(), 2);
+        assert_partition(&shards, 1, 100);
+        // Uniform would cut at 50. Density pushes the cut deep into the heavy
+        // window so shard 1 (the dense tail) is small.
+        assert!(
+            shards[0].end >= 90,
+            "cut should land inside the heavy window (>=90), got {}",
+            shards[0].end
+        );
+        // And the heavy shard must stay non-empty (boundary discipline).
+        assert!(shards[1].start <= shards[1].end, "heavy shard non-empty");
+    }
+
+    #[test]
+    fn density_split_falls_back_to_uniform_when_profile_empty() {
+        let profile = DensityProfile {
+            window_size: 16384,
+            first_window_start: 1,
+            weights: vec![],
+        };
+        let dens = split_region_density("7", 1, 100, 4, &profile);
+        let uniform = split_region("7", 1, 100, 4);
+        assert_eq!(dens, uniform, "empty profile must equal uniform split");
+
+        // All-zero weights are also degenerate -> uniform fallback.
+        let zero = DensityProfile {
+            window_size: 10,
+            first_window_start: 1,
+            weights: vec![0; 10],
+        };
+        assert_eq!(split_region_density("7", 1, 100, 4, &zero), uniform);
+    }
+
+    #[test]
+    fn density_split_balances_estimated_work() {
+        // Skewed profile: first half light, second half heavy. The density split's
+        // per-shard weight spread must be far tighter than the uniform split's.
+        let mut weights = vec![1u64; 20];
+        for w in weights.iter_mut().skip(10) {
+            *w = 50;
+        }
+        let profile = DensityProfile {
+            window_size: 100,
+            first_window_start: 1,
+            weights,
+        };
+        let n = 4;
+        let dens = split_region_density("7", 1, 2000, n, &profile);
+        let uni = split_region("7", 1, 2000, n);
+        assert_partition(&dens, 1, 2000);
+
+        let work = |s: &Shard| profile.weight_in(s.start, s.end);
+        let spread = |shards: &[Shard]| {
+            let w: Vec<f64> = shards.iter().map(work).collect();
+            let max = w.iter().cloned().fold(f64::MIN, f64::max);
+            let mean = w.iter().sum::<f64>() / w.len() as f64;
+            max / mean // 1.0 == perfectly balanced
+        };
+        let dens_ratio = spread(&dens);
+        let uni_ratio = spread(&uni);
+        assert!(
+            dens_ratio < uni_ratio,
+            "density split must balance work better: dens max/mean {dens_ratio:.3} \
+             should be < uniform {uni_ratio:.3}"
+        );
+        assert!(dens_ratio < 1.3, "density split should be near-balanced, got {dens_ratio:.3}");
     }
 
     #[test]

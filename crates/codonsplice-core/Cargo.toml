@@ -19,6 +19,10 @@ cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core", version = "0.1.1" }
 # preserve_order keeps JSON/TSV columns in record/projection order (a Variant's
 # struct-field order, or the SELECT column order) instead of sorting them.
 serde_json = { version = "1", features = ["preserve_order"] }
+# Track 2 density-aware sharding reads the BAI linear index (compressed bytes per
+# 16 kb window) to estimate read density, plus the BAM header to resolve a chrom
+# to its reference id. Same noodles release cnvlens-core links, so no version skew.
+noodles = { version = "0.111", features = ["bam", "bgzf", "csi", "core", "sam"] }
 
 [dev-dependencies]
 # Integration tests compare the VM against direct cnvlens-core calls and parse
