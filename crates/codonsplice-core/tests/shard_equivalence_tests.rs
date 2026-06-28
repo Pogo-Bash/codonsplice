@@ -228,6 +228,76 @@ fn vm_query_is_identical_with_and_without_sharding() {
     assert_eq!(serial, sharded, "VM output must be identical sharded vs serial");
 }
 
+/// Run a query through the public `Vm` with `SPLICE_SHARDS` forced to `shards`,
+/// returning the newline-joined `record_to_json` byte stream — the exact bytes
+/// the CLI emits, so equality here is byte-identity.
+fn run_query_json(query: &str, shards: &str) -> String {
+    use codonsplice_core::{compile, Vm, VmOutput};
+    std::env::set_var("SPLICE_SHARDS", shards);
+    let program = compile(query).unwrap();
+    let out = Vm::new(program).run().unwrap();
+    std::env::remove_var("SPLICE_SHARDS");
+    let recs = match out {
+        VmOutput::Records(r) | VmOutput::Rows(r) => r,
+        other => panic!("expected records, got {other:?}"),
+    };
+    recs.iter()
+        .map(|r| codonsplice_core::vm::record_to_json(r).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// CALL cnv under sharding: the integration's first real "CALL cnv under
+/// sharding" gate. `SPLICE_SHARDS=8` routes `compute_coverage_windows` to
+/// `coverage::compute_coverage_region_parallel` (global-segmentation-first:
+/// only per-window counting is parallel, median/GC/segmentation stay global),
+/// so the emitted CNV calls must be byte-identical to the serial path
+/// (`SPLICE_SHARDS=1`). The boundary-spanning guarantee (a CNV straddling a
+/// shard seam is one call, not two) is proven in cnvlens-core's
+/// `amplification_spanning_a_shard_boundary_is_one_call`.
+#[test]
+fn cnv_query_is_identical_with_and_without_sharding() {
+    let bam = data_path("NA12878_EGFR.bam");
+    let query = format!(
+        "FROM bam \"{}\" WHERE chr = \"7\" AND pos >= 55000000 AND pos <= 55300000 \
+         CALL cnv WITH window_size = 500",
+        bam.to_string_lossy(),
+    );
+    let serial = run_query_json(&query, "1");
+    let sharded = run_query_json(&query, "8");
+    assert_eq!(
+        serial, sharded,
+        "CALL cnv must be byte-identical sharded vs serial"
+    );
+}
+
+/// ANNOTATE over a sharded producer: `CALL variants` is region-sharded across
+/// threads (SPLICE_SHARDS=8), then `ANNOTATE WITH genes=...` maps each variant
+/// to its gene/exon. The shard count must not change the answer — production +
+/// annotation must be byte-identical to the serial run. This is the ANNOTATE leg
+/// of the unified gate (non-vacuous: the BAM producer genuinely shards here).
+#[test]
+fn annotate_query_is_identical_with_and_without_sharding() {
+    let bam = data_path("NA12878_EGFR.bam");
+    let reference = data_path("EGFR_region.fa");
+    let gff = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../testdata/EGFR_region.GRCh37.gff3");
+    let query = format!(
+        "FROM bam \"{}\" WHERE chr = \"7\" AND pos >= {START} AND pos <= {END} \
+         CALL variants WITH reference = \"{}\" ANNOTATE WITH genes = \"{}\"",
+        bam.to_string_lossy(),
+        reference.to_string_lossy(),
+        gff.to_string_lossy(),
+    );
+    let serial = run_query_json(&query, "1");
+    let sharded = run_query_json(&query, "8");
+    assert!(serial.contains("EGFR"), "ANNOTATE must attach the EGFR gene column");
+    assert_eq!(
+        serial, sharded,
+        "ANNOTATE over a sharded producer must be byte-identical to serial"
+    );
+}
+
 #[test]
 fn split_at_every_known_variant_position_stays_identical() {
     let fx = fixture();

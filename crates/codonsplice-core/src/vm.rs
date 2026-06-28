@@ -846,7 +846,21 @@ impl Vm {
         let bytes = self.require_bam(ds, "coverage")?;
         match (region, ds.bai_bytes()) {
             (Some(r), Some(bai)) => {
-                coverage::analyze_coverage_region(bytes, bai, &r.to_core(), opts)
+                let core_region = r.to_core();
+                // Honour the SAME unified shard count as the variant producer.
+                // The parallel engine (global-segmentation-first) shards only the
+                // per-window depth counting and is byte-identical to the serial
+                // path, so this is a transparent speed swap — and CNV detection
+                // runs over the assembled global window array regardless.
+                let n = match (core_region.start, core_region.end) {
+                    (Some(s), Some(e)) if e > s => unified_shard_count(e - s + 1),
+                    _ => 1,
+                };
+                if n > 1 {
+                    coverage::compute_coverage_region_parallel(bytes, bai, &core_region, opts, n)
+                } else {
+                    coverage::analyze_coverage_region(bytes, bai, &core_region, opts)
+                }
             }
             _ => coverage::coverage_windows(bytes, None, opts),
         }
@@ -1215,11 +1229,22 @@ fn plan_variant_shards(
     if end <= start {
         return None;
     }
-    // In-module parallelism. Native: env override or core count. Wasm32: a lone
-    // wasm instance is single-threaded, so in-module sharding is always serial
-    // (parallelism is the JS worker pool calling the exported per-shard function,
-    // outside this VM instance). Forcing `available = 1` here makes
-    // `plan_shard_count` return 1 → serial, the load-bearing fallback.
+    let n = unified_shard_count(end - start + 1);
+    if n <= 1 {
+        return None;
+    }
+    Some(crate::shard::split_region(&r.chrom, start, end, n))
+}
+
+/// The single, unified shard-count source honoured by EVERY sharded producer
+/// (variants, CNV coverage). Native: the `SPLICE_SHARDS` env override, else the
+/// available CPU count. Wasm32: a lone wasm instance is single-threaded, so
+/// in-module sharding is always serial (parallelism is the JS worker pool
+/// calling the exported per-shard function, outside this VM instance). Forcing
+/// `available = 1` makes `plan_shard_count` return 1 → serial, the load-bearing
+/// fallback. Centralising this is what lets CNV and variants share one
+/// `SPLICE_SHARDS` reader (no second, drifting source).
+fn unified_shard_count(span: i64) -> usize {
     #[cfg(not(target_arch = "wasm32"))]
     let available = match std::env::var("SPLICE_SHARDS").ok().and_then(|s| s.parse::<usize>().ok()) {
         Some(n) => n,
@@ -1227,11 +1252,7 @@ fn plan_variant_shards(
     };
     #[cfg(target_arch = "wasm32")]
     let available = 1usize;
-    let n = crate::shard::plan_shard_count(end - start + 1, available);
-    if n <= 1 {
-        return None;
-    }
-    Some(crate::shard::split_region(&r.chrom, start, end, n))
+    crate::shard::plan_shard_count(span, available)
 }
 
 /// Produce variant records for `CALL_VARIANTS`, dispatching by source format.
