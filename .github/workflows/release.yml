@@ -166,14 +166,18 @@ jobs:
             fi
             echo "::endgroup::"
           }
-          # Dependency order: spliceql (no internal deps) → codonsplice-core
-          # (depends on spliceql + cnvlens-core, both on crates.io). cnvlens-core
-          # is published out-of-band from the cnvlens repo. The `sleep`s give the
-          # crates.io index time to propagate so the next crate can resolve the
-          # one just published. Not --locked: the published crate is verified by
-          # building against registry versions of its path deps, which the
-          # workspace lock does not describe.
+          # Dependency order: spliceql + cnvlens-core (no internal deps) →
+          # codonsplice-core (depends on both). cnvlens-core lives in the cnvlens
+          # submodule (checked out above via submodules: recursive); publishing it
+          # here means an engine change no longer needs a manual hand-publish — the
+          # publish() helper skips it idempotently when its version is unchanged
+          # (already on crates.io). The `sleep`s give the crates.io index time to
+          # propagate so the next crate can resolve the one just published. Not
+          # --locked: the published crate is verified against registry versions of
+          # its path deps, which the workspace lock does not describe.
           publish "spliceql"         -p spliceql
+          sleep 30
+          publish "cnvlens-core"     --manifest-path cnvlens/rust/cnvlens-core/Cargo.toml
           sleep 30
           publish "codonsplice-core" -p codonsplice-core
 
