@@ -278,49 +278,47 @@ git commit
 
 ## Task 5: Extend the byte-identical gate to CALL cnv + ANNOTATE (the real integration work — TDD)
 
-This is the task the user singled out: prove the producers Track 2 did NOT originally shard are *also* serial==sharded, or honestly document which producers run serial-only. Sharding currently wraps `CALL variants` alone; this task either extends it to `CALL cnv` / `ANNOTATE` or asserts they fall back to serial deterministically.
+**UPDATE (2026-06-28): CNV is now proven shard-safe — the interim "serial-only" decision is superseded.** A dedicated session implemented correct parallel CNV in cnvlens-core (`feat/parallel-cnv` @ `e11edd9`, spec: `docs/...spec`): the **global-segmentation-first** design parallelizes only per-window depth counting and keeps median/GC/segmentation global over the assembled window array, so the result is byte-identical to serial — *including a CNV that straddles a shard boundary* (proven by a positive control). So this task is no longer "diagnose then maybe route serial"; it is "wire CALL cnv to the parallel engine and add it to the unified gate."
 
 **Files:**
+- Modify: `crates/codonsplice-core/src/vm.rs` (`compute_coverage_windows`: use `coverage::compute_coverage_region_parallel(.., shards)` when a region + BAI are present and the unified shard count > 1; else serial — both byte-identical)
 - Modify: `crates/codonsplice-core/tests/shard_equivalence_tests.rs` (add CNV + ANNOTATE equivalence cases)
-- Possibly modify: `crates/codonsplice-core/src/vm.rs` (extend sharding to the CNV/ANNOTATE producer, OR make those producers an explicit serial-only path)
+- Submodule: bump `cnvlens/rust/cnvlens-core` pointer to `feat/parallel-cnv` @ `e11edd9` (named branch — verify not detached), dedicated pointer-bump commit.
 
 **Interfaces:**
-- Consumes: `SPLICE_SHARDS` env toggle; the `CALL cnv` and `ANNOTATE` producers.
-- Produces: a passing equivalence assertion (or a documented, tested serial-only fallback) for both producers.
+- Consumes: the unified `SPLICE_SHARDS` count (Track 2's reader); `coverage::compute_coverage_region_parallel(bam, bai, region, opts, shards) -> Result<Vec<CoverageWindow>>` (cnvlens-core, byte-identical to `analyze_coverage_region`).
+- Produces: `CALL cnv` running parallel-stage-A under sharding, byte-identical to serial; CNV in the unified gate alongside variants + ANNOTATE.
 
-- [ ] **Step 1: Write the failing test — CALL cnv under sharding == serial**
+- [ ] **Step 1: Bump the cnvlens-core pointer and verify the engine gate is green**
+
+```bash
+git -C cnvlens/rust/cnvlens-core checkout feat/parallel-cnv   # named branch, not detached
+git -C cnvlens/rust/cnvlens-core rev-parse --short HEAD        # expect e11edd9
+SPLICE_NO_UPDATE_CHECK=1 cargo test -p cnvlens-core --test parallel_cnv   # 5 green: byte-identical 2..16 shards + boundary positive control
+git add cnvlens/rust/cnvlens-core && git commit -m "bump: cnvlens-core parallel CNV (e11edd9)"
+```
+
+- [ ] **Step 2: Wire `compute_coverage_windows` to the parallel engine**
+
+In `vm.rs`, when `(region, bai)` are both present and the unified shard count `n > 1`, call `coverage::compute_coverage_region_parallel(bytes, bai, &r.to_core(), opts, n)` instead of `analyze_coverage_region`. Reuse Track 2's existing shard-count source (do NOT add a second `SPLICE_SHARDS` reader — that reconciliation is the whole point of doing this at integration). The engine guarantees byte-identical, so this is a transparent swap.
+
+- [ ] **Step 3: Write the VM-level CALL cnv equivalence test**
 
 ```rust
 #[test]
 fn cnv_sharded_is_byte_identical_to_serial() {
     let bam = "/home/swap/lang/codonsplice/cnvlens/public/sample-data/NA12878_EGFR.bam";
     let q = format!(
-        r#"FROM bam "{bam}" WHERE chr = "7" AND pos >= 55200000 AND pos <= 55260000 \
+        r#"FROM bam "{bam}" WHERE chr = "7" AND pos >= 55000000 AND pos <= 55300000 \
            CALL cnv WITH window_size = 500"#
     );
-    std::env::set_var("SPLICE_SHARDS", "1");
-    let serial = run_to_json(&q);          // existing helper in this file
-    std::env::set_var("SPLICE_SHARDS", "8");
-    let sharded = run_to_json(&q);
+    std::env::set_var("SPLICE_SHARDS", "1");  let serial  = run_to_json(&q);
+    std::env::set_var("SPLICE_SHARDS", "8");  let sharded = run_to_json(&q);
     std::env::remove_var("SPLICE_SHARDS");
-    assert_eq!(serial, sharded, "CALL cnv must be identical sharded vs serial");
+    assert_eq!(serial, sharded, "CALL cnv must be byte-identical sharded vs serial");
 }
 ```
-
-- [ ] **Step 2: Run it — expect FAIL or SKEW**
-
-```bash
-SPLICE_NO_UPDATE_CHECK=1 cargo test -p codonsplice-core --test shard_equivalence_tests cnv_sharded -- --nocapture
-```
-Expected: FAIL if CNV is sharded incorrectly (window boundaries split a CNV), OR PASS if the producer already runs serial-only (CNV needs whole-region depth — sharding a CNV across shard seams is semantically wrong). **Diagnose which before "fixing."** A CNV call spans windows; a naive coordinate split would double-count or clip calls at seams (boundary class #20).
-
-- [ ] **Step 3: Implement the honest resolution**
-
-Decide from Step 2's evidence:
-- If CNV detection needs the whole region (likely): route `CallKind::Cnv` through `SerialExecutor` explicitly (`plan_shard_count` returns 1 for CNV) and document "CNV runs serial — depth segmentation is not shard-safe; sharding applies to per-position producers only." The test then asserts serial==serial (trivially identical) and the docstring records the limitation.
-- If CNV *can* shard with overlap-and-merge: implement the overlap halo + dedup-at-seam in `shard_and_merge`, keep the test as a true equivalence.
-
-Whichever: **say which in the test name + COORDINATION_LOG.md.** Do not fake a parallel CNV that double-counts.
+Expected: PASS (the engine already proves byte-identity; this confirms the VM wiring honors the unified shard count). The deeper boundary-spanning guarantee already lives in cnvlens-core's `amplification_spanning_a_shard_boundary_is_one_call`.
 
 - [ ] **Step 4: Add the ANNOTATE equivalence case**
 

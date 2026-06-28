@@ -102,3 +102,19 @@ Per the user: **integration is its own session** — done in dependency order wi
 - The real work = Task 5: prove CALL cnv + ANNOTATE serial==sharded (or honestly route CNV serial-only if depth-segmentation isn't shard-safe at seams — boundary class #20). This is the "CALL cnv under sharding" gap, closed honestly.
 - Guarded hazard: Track 2 edits `records_to_vcf` where Track 0's ID/FILTER fix lives → explicit preserve+re-test step.
 - Ship (Task 7) is GATED on explicit user approval. Submodule push order: spliceql first (published on crates.io), then codonsplice-core; cnvlens-core unchanged → idempotent skip.
+
+
+---
+
+## NEW TRACK (done, verified) — Correct Parallel CNV (global-segmentation-first)
+Spec: `docs/.../Correct Parallel CNV`. Submodule: **cnvlens-core `feat/parallel-cnv` @ e11edd9** (named branch, not detached). Supersedes the integration plan's interim "CNV serial-only" decision — **CNV is now proven shard-safe.**
+
+**Task 0 (research+code):** Confirmed (cited): per-window depth counting is embarrassingly parallel; segmentation (threshold/CBS/HMM) is order-dependent and must stay global; shard-then-stitch's failure modes (wrong-merge / split-at-seam) are real → global-segmentation-first is the correct default at our single-contig scale. Code finding: the two stages were ALREADY separated (`compute_coverage_windows` → `detect_cnvs`), and `detect_cnvs_*` is already pure+global. The real seam is *inside* `compute_coverage`: only the read-counting is parallelizable; median/GC/mask are global reductions.
+
+**Tasks 1–4 (DONE, cnvlens-core):** Refactored out `finalize_coverage` (shared global stage) + lifted `Slot`; added `compute_coverage_region_parallel` — shards only the counting across `std::thread::scope`, each thread into a PRIVATE map merged by a clean integer sum after join (**race-free by construction**, borrow-checked; the reviewer's hazard explicitly addressed). Window-ownership filtering ⇒ each read counted exactly once across seams; boundary shards open-ended to absorb region-edge overhang. **Verified (tests/parallel_cnv.rs, 5 green):** serial characterization; **parallel==serial byte-identical at 2/3/4/8/16 shards**; total-coverage conservation across seams; shards=1==serial; and **the key positive control — a 3x amp straddling the real 8-shard boundary is emitted as ONE whole call, not two fragments.**
+
+**Task 5 (WASM):** `#[cfg(target_arch="wasm32")]` → serial fallback (threads are enhancement, never load-bearing). `cargo check --target wasm32-unknown-unknown` passes (cfg correctly excludes thread::scope). HONEST LANDING (spec-permitted): WASM CNV runs single-threaded; equivalence proven on native; full Web-Worker+SAB CNV remains design-only (PARALLELISM_WASM.md), same status as variant WASM threading.
+
+**Task 6 (gate integration) — DEFERRED to the integration session (anti-tangling):** the unified serial-vs-sharded gate + `SPLICE_SHARDS` plumbing live across Track2/Track3, which merge at integration. Deferring loses NO correctness proof (engine gate proves byte-identical windows; detect is a pure fn of windows). Integration plan Task 5 UPDATED with the exact wiring + pointer bump (e11edd9).
+
+**Submodule discipline:** committed on named branch feat/parallel-cnv; superproject pointer bump intentionally NOT made on Track 0's branch — it belongs on the integration/feat/call-cnv branch (logged for integration).
