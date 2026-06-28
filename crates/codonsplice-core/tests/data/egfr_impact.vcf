@@ -1,0 +1,14 @@
+##fileformat=VCFv4.2
+##contig=<ID=7,length=159138663>
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth at the site">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Alternate allele frequency">
+##INFO=<ID=GENE,Number=1,Type=String,Description="Gene symbol (not read by SpliceQL)">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+7	55019021	rs1	G	A	60.0	PASS	DP=100;AF=0.50;GENE=EGFR
+7	55142285	.	C	T	35.5	LowQual	DP=40;AF=0.10;GENE=EGFR
+7	55174772	cosm6240	T	G	120.0	PASS	DP=200;AF=0.45;GENE=EGFR
+7	55181378	.	A	ATTG	80.0	PASS	DP=150;AF=0.30;GENE=EGFR
+7	55191822	rs2	G	GA	22.0	LowQual	DP=25;AF=0.08;GENE=EGFR
+7	55249071	rs3	C	T	999.0	PASS	DP=300;AF=0.49;GENE=EGFR
+7	55259515	.	T	C	45.0	PASS	DP=60;AF=0.20;GENE=EGFR
+12	25245350	rs4	C	T	75.0	PASS	DP=90;AF=0.35;GENE=KRAS
