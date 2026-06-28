@@ -417,6 +417,62 @@ impl ShardExecutor for NativeThreadExecutor {
     }
 }
 
+/// WASM shard backend: the executor used **inside a single wasm module
+/// instance**. A lone wasm instance has exactly one thread, so this delegates to
+/// the serial map — it is, deliberately, byte-for-byte the [`SerialExecutor`].
+///
+/// The actual cross-shard parallelism in the browser does **not** flow through
+/// this trait: a `Fn(&Shard) -> T` closure can't be `postMessage`'d to a Web
+/// Worker. Instead the JS worker pool (`js/shard-pool.js`) re-enters the
+/// *exported* per-shard function (`call_variants_region` in the `@codonsplice/wasm`
+/// bindings) once per shard, each call running this serial executor over its one
+/// shard inside its own worker's wasm instance over the SAME
+/// `SharedArrayBuffer`-backed input bytes. The boundary-correct clamp/merge then
+/// happens once on the main thread (`merge_shards`). So:
+///
+/// * **In-module dispatch** (this type) is always serial — the load-bearing
+///   single-thread guarantee. If the worker pool can't spin up (no
+///   `crossOriginIsolated`, no `SharedArrayBuffer`), JS calls the same exported
+///   function once over the whole region and the result is identical.
+/// * **Cross-worker dispatch** (the JS pool) is the speed enhancement, layered
+///   *outside* Rust, reusing [`split_region`]/[`split_region_bai`] (via the
+///   exported `plan_shards`) and the same clamp as [`shard_and_merge`].
+///
+/// `workers` records the parallelism JS detected (`crossOriginIsolated ?
+/// hardwareConcurrency : 1`) purely for introspection/telemetry; it never
+/// changes the in-module result.
+#[derive(Debug, Clone, Copy)]
+pub struct WasmShardExecutor {
+    /// Parallelism JS detected. `<= 1` means the page is not cross-origin
+    /// isolated (or has no SAB) — pure serial fallback.
+    pub workers: usize,
+}
+
+impl WasmShardExecutor {
+    /// Build from the JS-detected parallelism (`crossOriginIsolated ?
+    /// navigator.hardwareConcurrency : 1`). `0` is normalised to `1`.
+    pub fn from_parallelism(workers: usize) -> Self {
+        WasmShardExecutor { workers: workers.max(1) }
+    }
+}
+
+impl Default for WasmShardExecutor {
+    fn default() -> Self {
+        WasmShardExecutor { workers: 1 }
+    }
+}
+
+impl ShardExecutor for WasmShardExecutor {
+    fn run_shards<T, F>(&self, shards: &[Shard], f: F) -> Vec<T>
+    where
+        T: Send,
+        F: Fn(&Shard) -> T + Sync,
+    {
+        // One wasm instance == one thread. Serial, byte-identical to SerialExecutor.
+        shards.iter().map(|s| f(s)).collect()
+    }
+}
+
 /// Run `produce` over every shard, clamp each shard's output to its INCLUSIVE
 /// bounds, and concatenate in shard order. This is the boundary-correct merge.
 ///
@@ -652,11 +708,34 @@ mod tests {
 
         let native = shard_and_merge(&NativeThreadExecutor, &shards, toy_produce, |v: &V| v.pos).unwrap();
         let serial_sharded = shard_and_merge(&SerialExecutor, &shards, toy_produce, |v: &V| v.pos).unwrap();
+        // The WASM in-module executor is serial by construction; it must match too.
+        let wasm = shard_and_merge(&WasmShardExecutor::from_parallelism(8), &shards, toy_produce, |v: &V| v.pos).unwrap();
 
         // Every in-bounds position exactly once, no over-fetch leakage, sorted.
         let expected: Vec<V> = (10..=30).map(|p| V { pos: p }).collect();
         assert_eq!(serial, expected);
         assert_eq!(serial_sharded, expected, "serial-sharded == serial");
         assert_eq!(native, expected, "native-sharded == serial (byte-identical)");
+        assert_eq!(wasm, expected, "wasm-executor sharded == serial (byte-identical)");
+    }
+
+    #[test]
+    fn wasm_executor_matches_serial_regardless_of_worker_count() {
+        // The detected worker count is telemetry only; the in-module result is
+        // always the serial map. Fallback (workers<=1) and "isolated" (workers>1)
+        // produce identical output — the load-bearing single-thread guarantee.
+        let shards = split_region("7", 1, 97, 5);
+        for workers in [0usize, 1, 2, 4, 16] {
+            let wasm = shard_and_merge(
+                &WasmShardExecutor::from_parallelism(workers),
+                &shards,
+                toy_produce,
+                |v: &V| v.pos,
+            )
+            .unwrap();
+            let serial =
+                shard_and_merge(&SerialExecutor, &shards, toy_produce, |v: &V| v.pos).unwrap();
+            assert_eq!(wasm, serial, "wasm(workers={workers}) must equal serial");
+        }
     }
 }

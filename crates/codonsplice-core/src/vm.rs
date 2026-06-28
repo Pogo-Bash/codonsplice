@@ -1020,8 +1020,18 @@ fn sharded_variant_producer(
     // Shard over plain `Variant` payloads (which are `Send`), not `Record`
     // (which can wrap a non-`Send` `Cursor`). The boundary-correct clamp keeps
     // each variant in exactly one shard; we wrap into records after merging.
+    //
+    // Executor by target: native uses scoped OS threads; wasm32 has no in-module
+    // threads, so it uses the serial `WasmShardExecutor` (parallelism in the
+    // browser is the JS worker pool re-entering the exported per-shard function —
+    // see `crates/codonsplice-wasm/js/shard-pool.js`, never `std::thread`). This
+    // also means `std::thread::scope` is never *reached* on wasm at runtime.
+    #[cfg(not(target_arch = "wasm32"))]
+    let executor = crate::shard::NativeThreadExecutor;
+    #[cfg(target_arch = "wasm32")]
+    let executor = crate::shard::WasmShardExecutor::default();
     let merged = crate::shard::shard_and_merge(
-        &crate::shard::NativeThreadExecutor,
+        &executor,
         &shards,
         |s: &crate::shard::Shard| {
             variants::call_variants_region(bam, bai, &s.to_core_region().to_core(), opts)
@@ -1042,10 +1052,18 @@ fn plan_variant_shards(
     if end <= start {
         return None;
     }
+    // In-module parallelism. Native: env override or core count. Wasm32: a lone
+    // wasm instance is single-threaded, so in-module sharding is always serial
+    // (parallelism is the JS worker pool calling the exported per-shard function,
+    // outside this VM instance). Forcing `available = 1` here makes
+    // `plan_shard_count` return 1 → serial, the load-bearing fallback.
+    #[cfg(not(target_arch = "wasm32"))]
     let available = match std::env::var("SPLICE_SHARDS").ok().and_then(|s| s.parse::<usize>().ok()) {
         Some(n) => n,
         None => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
     };
+    #[cfg(target_arch = "wasm32")]
+    let available = 1usize;
     let n = crate::shard::plan_shard_count(end - start + 1, available);
     if n <= 1 {
         return None;

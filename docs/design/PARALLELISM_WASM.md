@@ -1,9 +1,38 @@
 # Region-Sharded Parallelism — WASM Backend (Track 2)
 
-Status: **native backend built + serial-equivalence proven; WASM backend
-DESIGNED (fallback path implemented, worker pool not yet built).** This document
-is the contract a WASM worker-pool implementation must satisfy so it slots in
-*without* rewriting the sharding/merge brain.
+Status: **native backend built + serial-equivalence proven; WASM single-thread
+fallback VERIFIED byte-identical in a real `wasm-pack` build; WASM worker pool +
+SharedArrayBuffer wiring BUILT and compiling; parallel-in-browser byte-identity
+DESIGNED/BUILT-not-run (needs a cross-origin-isolated host — steps in §5/§6).**
+
+This document is the contract the WASM worker-pool implementation satisfies; it
+slots in *without* rewriting the sharding/merge brain.
+
+## 0. What changed (this branch, `feat/wasm-threads`)
+
+- **The bare-`wasm32` link no longer fails.** The old blocker (`zlib_rs`
+  `malloc`/`free` undefined in a bare `wasm32-unknown-unknown` link) does **not**
+  reproduce under `wasm-pack` 0.13.1 / Rust 1.96 with the current `noodles`
+  stack: `wasm-pack build crates/codonsplice-wasm --target {web,nodejs}` links
+  clean (894 KB `.wasm`). `wasm-pack` supplies the allocator; that resolves it.
+- **New WASM exports** (`crates/codonsplice-wasm/src/lib.rs`) make the Rust
+  sharding brain callable from JS: `crossorigin_isolated()`, `shard_parallelism()`,
+  `plan_shards(...)` (reuses `split_region`/`split_region_bai`),
+  `call_variants_region(...)` (the per-shard producer), and `merge_shards(...)`
+  (the boundary-correct clamp + shard-ordered concat).
+- **`WasmShardExecutor`** added to `shard.rs`: the in-module executor, serial by
+  construction (one wasm instance == one thread), unit-tested byte-identical to
+  `SerialExecutor`. The VM (`sharded_variant_producer`) now picks it via
+  `cfg(target_arch = "wasm32")` so `std::thread::scope` is never *reached* on wasm.
+- **JS worker pool** (`crates/codonsplice-wasm/js/shard-pool.js` +
+  `shard-worker.js`): copies BAM/BAI once into a `SharedArrayBuffer`, fans shards
+  to Web Workers, merges via `merge_shards`. Falls back to a single sequential
+  call when not isolated.
+- **Byte-identity proven** by running the real wasm in Node
+  (`crates/codonsplice-wasm/test/byte_identity.mjs`): the single whole-region call
+  AND the full sharded pipeline (`plan_shards` → per-shard `call_variants_region`
+  → `merge_shards`, at 2/4/6 shards) are byte-identical to the native serial
+  `call_variants_region` baseline.
 
 ## 1. What already exists (the backend-agnostic brain)
 
@@ -34,7 +63,8 @@ Implemented executors:
 |---|---|---|
 | `SerialExecutor` | maps in-process, no threads | always-available fallback / equivalence baseline |
 | `NativeThreadExecutor` | `std::thread::scope`, one worker per shard | native CLI (built, tested) |
-| `WasmWorkerExecutor` | Web Workers + SharedArrayBuffer (this doc) | browser, *to build* |
+| `WasmShardExecutor` | serial in-module (one wasm instance == one thread) | wasm in-module dispatch (built, tested) |
+| JS worker pool (`js/shard-pool.js`) | Web Workers + SharedArrayBuffer, re-enters the exported `call_variants_region` per shard | browser parallel (built; parallel run needs a COI host) |
 
 The native path is wired into the VM (`sharded_variant_producer` in `vm.rs`) and
 proven byte-identical to serial (`tests/shard_equivalence_tests.rs`, plus a
@@ -148,23 +178,54 @@ fallback is enforced at three layers, all already in place on the Rust side:
 `SPLICE_SHARDS=1` (native) is the CLI equivalent of "isolation unavailable" and
 is what the byte-identical VM test uses as its serial baseline.
 
-## 5. Verification status
+## 5. Verification status (what is RUN vs BUILT vs DESIGNED)
+
+**VERIFIED-RUNNING:**
 
 - **Native parallel:** built and wired into the VM. ~2.3x wall-clock on the
-  EGFR sample at 16 shards (sublinear — uniform coordinate splitting is
-  load-imbalanced against non-uniform read density; a density-aware split using
-  BAI block offsets is the obvious follow-up).
-- **Serial equivalence:** proven byte-identical (2/3/4/8/16 shards, boundary
-  variant at `55220177` on both the inclusive end and start of a shard, splits
-  AT every known variant position, and an end-to-end VM `SPLICE_SHARDS=1` vs `=8`
-  comparison; plus a CLI md5 match).
-- **WASM single-thread:** the `shard` module **type-checks for
-  `wasm32-unknown-unknown`** (`cargo check -p codonsplice-core --target
-  wasm32-unknown-unknown --lib`), and the brain never spawns a thread on the
-  serial/fallback path. A full `wasm32` **link** currently fails for a reason
-  **unrelated to Track 2**: `cnvlens-core`'s `zlib_rs` dependency references
-  `malloc`/`free` that aren't provided in a bare `wasm32-unknown-unknown` link
-  (reproducible by building `cnvlens-core` alone for wasm with zero Track 2 code
-  involved). Resolving that is a cnvlens-core concern (e.g. a `zlib-rs`
-  Rust-allocator feature, or building via `wasm-pack`), tracked separately.
-- **WASM worker pool:** **designed, not built** (this document).
+  EGFR sample at 16 shards (sublinear; density-aware split now lands the cuts).
+- **Serial equivalence (native):** proven byte-identical (2/3/4/8/16 shards,
+  boundary variant at `55220177` on both the inclusive end and start of a shard,
+  splits AT every known variant position, and an end-to-end VM `SPLICE_SHARDS=1`
+  vs `=8` comparison; plus a CLI md5 match). Plus a new `WasmShardExecutor`
+  unit test (any worker count ⇒ serial bytes).
+- **WASM build:** `wasm-pack build crates/codonsplice-wasm --target nodejs`
+  (and `--target web`) **links and runs**. 894 KB `.wasm`.
+- **WASM single-thread byte-identity:** `node
+  crates/codonsplice-wasm/test/byte_identity.mjs` runs the real wasm and
+  confirms BOTH the single whole-region `call_variants_region` AND the full
+  sharded pipeline (`plan_shards` → per-shard `call_variants_region` →
+  `merge_shards`, sequentially — exactly one worker's worth of work each) are
+  **byte-identical** to the native serial baseline. In Node,
+  `crossorigin_isolated()` is `false` and `shard_parallelism()` is `1`, so this
+  is precisely the FALLBACK path being exercised.
+
+**BUILT-not-run (browser):**
+
+- **WASM worker pool + SAB wiring** (`js/shard-pool.js`, `js/shard-worker.js`):
+  written, syntax-valid, and drives only the exports already proven
+  byte-identical. The *parallel dispatch itself* has not been executed in a
+  cross-origin-isolated browser in this session (no headless COI browser
+  available here). The merge it performs is the same `merge_shards` proven above.
+
+**DESIGNED:**
+
+- **Shared-wasm-memory threads** (`wasm-bindgen-rayon`, atomics+bulk-memory,
+  nightly `build-std`) — *not* used. The hand-rolled pool here shares only the
+  read-only INPUT bytes via SAB and gives each worker its own wasm instance, so
+  no nightly/atomics build is needed. The rayon route remains an option (§2.3).
+
+### Manual parallel-in-browser verification (the one step not run here)
+
+1. `wasm-pack build crates/codonsplice-wasm --target web --out-dir pkg`
+2. `cargo run --release --example wasm_baseline -- <bam> <bai> <ref.fa> 7
+   54990000 55300100 crates/codonsplice-wasm/js` (writes `opts.json` + the
+   `serial.json` baseline next to `verify-coi.html`); put the sample
+   BAM/BAI under `crates/codonsplice-wasm/js/data/`.
+3. `node crates/codonsplice-wasm/js/coi-server.mjs` (sends COOP `same-origin` +
+   COEP `require-corp`).
+4. Open `http://localhost:8080/crates/codonsplice-wasm/js/verify-coi.html`.
+5. Expect `crossOriginIsolated = true`, `mode=parallel`, `workers>1`, and
+   `PARALLEL == SERIAL: byte-identical`. If `crossOriginIsolated` is false the
+   headers aren't reaching the page and the pool falls back to serial (still
+   correct, just not parallel).
