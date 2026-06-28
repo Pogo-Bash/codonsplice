@@ -86,10 +86,20 @@ compile time and turned into a BAI-indexed region seek instead of a full scan.
 
 | Operation | Parameters |
 | --- | --- |
-| `variants` | `min_depth`, `min_base_quality`, `min_mapping_quality`, `min_variant_reads`, `min_allele_freq` (alias `min_af`), `min_strand_bias` |
+| `variants` | `min_depth`, `min_base_quality`, `min_mapping_quality`, `min_variant_reads`, `min_allele_freq` (alias `min_af`), `min_strand_bias`, `reference` |
 | `cnv` / `coverage` | `window_size`, `amp_threshold`, `del_threshold`, `min_windows`, `segmentation_method` |
 | `reads` | *(none)* |
 | `header` | *(none)* |
+
+**`reference` (variants).** Pass a reference FASTA so `REF` is the *actual*
+reference base at each position — `CALL variants WITH reference = "chr7.fa"`.
+Without it, `REF` is inferred as the pileup-majority base, which is correct only
+where one allele dominates: at balanced heterozygous sites it is a coin-flip
+(so ~half get `REF`/`ALT` backwards), and **homozygous** variants (where ~100%
+of reads differ from the reference) are invisible entirely, because the
+majority *is* the variant base. A reference is required for valid VCF and any
+truth-set concordance. The FASTA contig names must match the BAM's (e.g. `>7`
+↔ BAM `7`), and it should be a full-contig FASTA (positions are indexed from 1).
 
 An unknown parameter is a compile error with a "did you mean" hint (Levenshtein +
 shared-token ranking over the known names):

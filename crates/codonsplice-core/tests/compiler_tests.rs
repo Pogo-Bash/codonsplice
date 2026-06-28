@@ -201,6 +201,26 @@ fn with_without_call_is_rejected() {
 }
 
 #[test]
+fn variants_accepts_reference_path_param() {
+    // `WITH reference = "<path>"` is a valid string param on CALL variants — it
+    // sets REF from the real reference base instead of the pileup majority.
+    let _ = ok(r#"FROM bam "x.bam" CALL variants WITH reference = "chr7.fa""#);
+}
+
+#[test]
+fn reference_param_must_be_a_string() {
+    // A non-string reference is a type mismatch, not silently accepted.
+    let e = err(r#"FROM bam "x.bam" CALL variants WITH reference = 7"#);
+    match e {
+        CompileError::ParamTypeMismatch { key, expected, .. } => {
+            assert_eq!(key, "reference");
+            assert_eq!(expected, "string");
+        }
+        other => panic!("expected ParamTypeMismatch, got {other:?}"),
+    }
+}
+
+#[test]
 fn non_constant_param_is_rejected() {
     let e = err(r#"FROM bam "x.bam" CALL cnv WITH window_size = depth"#);
     assert!(matches!(e, CompileError::NonConstantParam { .. }), "got {e:?}");

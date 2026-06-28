@@ -599,6 +599,11 @@ const VARIANT_PARAMS: &[ParamSpec] = &[
     // `min_af` is the documented short alias for `min_allele_freq`.
     ParamSpec { name: "min_af", ty: ParamType::F64 },
     ParamSpec { name: "min_strand_bias", ty: ParamType::F64 },
+    // Path to a reference FASTA. When given, REF is the actual reference base at
+    // each position (required for valid VCF + truth-set concordance); without it
+    // REF is inferred as the pileup-majority base, which is a coin-flip at
+    // balanced heterozygous sites.
+    ParamSpec { name: "reference", ty: ParamType::Str },
 ];
 
 /// The set of valid `WITH` parameter specs for a CALL operation.

@@ -536,7 +536,12 @@ impl Vm {
                         got: format_label(&ds.format),
                     });
                 }
-                let opts = self.build_variant_options();
+                let mut opts = self.build_variant_options();
+                // `WITH reference = "ref.fa"` makes REF the actual reference base
+                // at each position instead of the pileup-majority guess (which is
+                // a coin-flip at balanced het sites). Load it here, where the Io
+                // backend is available.
+                opts.reference_seqs = self.load_reference_seqs()?;
                 let core_region = region.as_ref().map(|r| r.to_core());
                 let producer: crate::runtime::RecordProducer =
                     Box::new(move |limit| variant_producer(&ds, &opts, core_region.as_ref(), is_vcf, limit));
@@ -644,6 +649,38 @@ impl Vm {
             }
         }
         o
+    }
+
+    /// Load the `WITH reference = "ref.fa"` FASTA into a per-contig sequence map,
+    /// if the parameter was given. Keyed by the FASTA contig name, which must
+    /// match the BAM/VCF contig names (e.g. `>7` ↔ BAM `7`). Returns `Ok(None)`
+    /// when no reference was requested (the caller then falls back to the
+    /// inferred-from-reads REF base).
+    fn load_reference_seqs(&self) -> Result<Option<HashMap<String, String>>, VmError> {
+        let path = self.pending_params.iter().find_map(|(k, v)| {
+            if k.as_ref() == "reference" {
+                match v {
+                    RuntimeValue::Str(s) => Some(s.to_string()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        });
+        let path = match path {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let bytes = self.io.read_file(&path).map_err(|e| {
+            VmError::Io(format!("reference FASTA {path:?}: {e}"))
+        })?;
+        let seqs = parse_fasta(&bytes);
+        if seqs.is_empty() {
+            return Err(VmError::Io(format!(
+                "reference FASTA {path:?} contained no sequences (expected `>name` records)"
+            )));
+        }
+        Ok(Some(seqs))
     }
 
     fn build_coverage_options(&self) -> CoverageOptions {
