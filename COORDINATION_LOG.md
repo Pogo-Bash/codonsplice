@@ -152,9 +152,14 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 ## Status
 | feature | branch | status |
 |---|---|---|
-| HGVS foundation | feat/hgvs | dispatching (wave 1) |
-| isec | feat/isec | dispatching (wave 1) |
-| multi-allelic | feat/multiallelic | dispatching (wave 1) |
-| density-shards | feat/density | dispatching (wave 1) |
-| PAIRED WITH | feat/paired | blocked on isec |
-| WASM workers | feat/wasm-threads | blocked on density |
+| HGVS foundation | feat/hgvs (wt cs-hgvs) | 🟡 wave-1 agent running |
+| isec | feat/isec (wt cs-isec) | 🟡 wave-1 agent running |
+| multi-allelic | feat/multiallelic (wt cs-multiallelic) | 🟡 wave-1 agent running |
+| density-shards | feat/density (wt cs-density) | 🟡 wave-1 agent running |
+| PAIRED WITH | feat/paired | ⛔ blocked on isec (wave 2) |
+| WASM workers | feat/wasm-threads | ⛔ blocked on density (wave 2) |
+
+## Worktree recipe (PROVEN — solves the Track-2 submodule fetch failure)
+Fresh worktree's `submodule update --init` fails (local-only commits not on remote). Recipe: `git worktree add -b feat/X ../cs-X <base>` then in it `rm -rf cnvlens crates/spliceql; git clone --shared <MAIN>/cnvlens ./cnvlens && checkout <c>; git clone --shared <MAIN>/crates/spliceql ./crates/spliceql && checkout -b feat/X <c>`. Gives independent EDITABLE submodule trees per worktree (each its own feat/X spliceql branch — solves the multi-feature spliceql contention). Build with `CARGO_TARGET_DIR=<wt>/target`. Verified: cargo check green in 8.6s. INTEGRATION NOTE: each worktree's spliceql commits live in its own clone — Phase-2 integration must `git fetch` each worktree's spliceql branch into main's submodule before pointer bumps.
+
+## Wave-1 review checkpoints (when each agent returns): demand the ORACLE RESULT, not just "tests pass" — HGVS: L858R→p.Leu858Arg + bcftools csq; isec: bcftools isec set-equality; multi-allelic: bcftools norm -m record-set; density: byte-identical + load-balance numbers. Then dispatch wave 2.
