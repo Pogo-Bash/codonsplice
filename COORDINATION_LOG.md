@@ -152,12 +152,24 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 ## Status
 | feature | branch | status |
 |---|---|---|
-| HGVS foundation | feat/hgvs (wt cs-hgvs) | 🟡 wave-1 agent running |
-| isec | feat/isec (wt cs-isec) | 🟡 wave-1 agent running |
-| multi-allelic | feat/multiallelic (wt cs-multiallelic) | 🟡 wave-1 agent running |
-| density-shards | feat/density (wt cs-density) | 🟡 wave-1 agent running |
-| PAIRED WITH | feat/paired | ⛔ blocked on isec (wave 2) |
-| WASM workers | feat/wasm-threads | ⛔ blocked on density (wave 2) |
+| HGVS foundation | feat/hgvs 23412f4 | ✅ VERIFIED (oracle below) |
+| isec | feat/isec e5dabc7 (cnvlens 48bf8f1, spliceql c34cada) | ✅ VERIFIED |
+| multi-allelic | feat/multiallelic 0e0d83f (cnvlens 5524886, spliceql ef15948) | ✅ VERIFIED |
+| density-shards | feat/density f05e934 (+orch review fix) | ✅ VERIFIED |
+| PAIRED WITH | feat/paired (wt cs-paired, on isec) | 🟡 wave-2 agent running |
+| WASM workers | feat/wasm-threads (wt cs-wasm, on density) | 🟡 wave-2 agent running |
+
+## DISK CRASH + recovery (logged): wave-1 agents died when the process exited (full-disk EROFS from target/ dirs at 90GB). User compacted the WSL vhdx, hand-committed all 4 wave-1 features on their feat/<name> branches with submodules branched (not detached) + pointers set. Disk now 889G free. Lesson reinforced: worktree target/ dirs are the disk risk — freed all 4 wave-1 targets after review.
+
+## WAVE-1 REVIEW CHECKPOINTS — oracle results VERIFIED (orchestrator re-ran each, not just "tests pass")
+- **HGVS** (cs-hgvs): codon.rs is the SINGLE shared module (8 unit tests: strand-aware extraction, genetic-code table, exon-boundary span, gc); `gc`/`translate`/`codon_at` registered as SpliceQL builtins (compiler.rs:709-712 — no grammar token needed, so spliceql had no new commit, which is why feat/hgvs spliceql == c247dad). **L858R on REAL chr7.fa → p.Leu858Arg / c.2573T>G / ENST00000275493** (l858r_on_real_chr7_reference PASS; codon independently asserted CTG=Leu before variant). Honest gap: bcftools csq corroboration not added (genetic code is authoritative; acceptable). The "build codon-extraction ONCE" constraint HELD.
+- **isec** (cs-isec): `matches_bcftools_isec` PASS — live `bcftools isec -p`, all 4 partitions record-set identical; exact (chrom,pos,ref,alt) match (chr7:55249100 T-vs-C correctly NOT shared); indel + cross-chrom cases. Surface `FROM vcf a ISEC vcf b MODE ...`; reusable set-op fn in vm.rs (PAIRED WITH builds on it).
+- **multi-allelic** (cs-multiallelic): `split_differential_vs_live_bcftools` PASS — live `bcftools norm -m - -f chr7.fa`, record-set identical + golden tracks live tool; per-allele AF apportioned (0.3/0.2/0.1) + indel. Surface `FROM vcf ... SPLIT CALL variants`.
+- **density** (cs-density): 10 shard unit tests (BAI-linear-index density estimate, balance, fallback, merge-matches-serial). REVIEW GAP found+closed: the density split path wasn't in an end-to-end byte-identical gate (only uniform + hand-placed-uneven were). Added `density_split_from_bai_is_byte_identical_to_serial` (f05e934): proves BAI-placed cuts are genuinely non-uniform for the EGFR BAM AND byte-identical to serial — non-vacuous. PASS.
+
+## INTEGRATION pointer map (submodule branches live in separate clones — Phase-2 must gather them):
+- spliceql branches: feat/hgvs(c247dad, builtins in core not grammar), feat/isec c34cada, feat/multiallelic ef15948, feat/paired (from c34cada), others ae6e0b9.
+- cnvlens branches: feat/isec 48bf8f1, feat/multiallelic 5524886, feat/paired (from 48bf8f1), feat/parallel-cnv e11edd9; hgvs/density unchanged c328749.
 
 ## Worktree recipe (PROVEN — solves the Track-2 submodule fetch failure)
 Fresh worktree's `submodule update --init` fails (local-only commits not on remote). Recipe: `git worktree add -b feat/X ../cs-X <base>` then in it `rm -rf cnvlens crates/spliceql; git clone --shared <MAIN>/cnvlens ./cnvlens && checkout <c>; git clone --shared <MAIN>/crates/spliceql ./crates/spliceql && checkout -b feat/X <c>`. Gives independent EDITABLE submodule trees per worktree (each its own feat/X spliceql branch — solves the multi-feature spliceql contention). Build with `CARGO_TARGET_DIR=<wt>/target`. Verified: cargo check green in 8.6s. INTEGRATION NOTE: each worktree's spliceql commits live in its own clone — Phase-2 integration must `git fetch` each worktree's spliceql branch into main's submodule before pointer bumps.
