@@ -1,0 +1,3241 @@
+##gff-version   3
+##sequence-region   7 1 159138663
+#!genome-build  GRCh37.p13
+#!genome-version GRCh37
+#!genome-date 2009-02
+#!genome-build-accession NCBI:GCA_000001405.14
+#!genebuild-last-updated 2013-09
+7	GRCh37	chromosome	1	159138663	.	.	.	ID=chromosome:7;Alias=CM000669.1,NC_000007.13
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+7	firstef	biological_region	55000906	55001160	0.924	-	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55001296	55001473	1	+	.	external_name=rank %3D 1;logic_name=firstef
+7	havana	pseudogene	55001392	55005877	.	+	.	ID=gene:ENSG00000218586;Name=RP4-791C19.1;biotype=pseudogene;gene_id=ENSG00000218586;logic_name=havana;version=3
+7	havana	processed_pseudogene	55001392	55005877	.	+	.	ID=transcript:ENST00000407916;Parent=gene:ENSG00000218586;Name=RP4-791C19.1-001;biotype=processed_pseudogene;havana_transcript=OTTHUMT00000343093;havana_version=1;tag=basic;transcript_id=ENST00000407916;version=2
+7	havana	exon	55001392	55005877	.	+	.	Parent=transcript:ENST00000407916;Name=ENSE00001556944;constitutive=1;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001556944;rank=1;version=2
+###
+7	firstef	biological_region	55072955	55073051	0.998	-	.	external_name=rank %3D 1;logic_name=firstef
+7	cpg	biological_region	55072963	55073433	160	.	.	external_name=oe %3D 0.60;logic_name=cpg
+7	cpg	biological_region	55086142	55088105	2.09e+03	.	.	external_name=oe %3D 0.93;logic_name=cpg
+7	firstef	biological_region	55086504	55087058	1	+	.	external_name=rank %3D 1;logic_name=firstef
+7	ensembl_havana	gene	55086714	55324313	.	+	.	ID=gene:ENSG00000146648;Name=EGFR;biotype=protein_coding;description=epidermal growth factor receptor [Source:HGNC Symbol%3BAcc:3236];gene_id=ENSG00000146648;logic_name=ensembl_havana_gene;version=11
+7	ensembl_havana	mRNA	55086714	55270769	.	+	.	ID=transcript:ENST00000455089;Parent=gene:ENSG00000146648;Name=EGFR-004;biotype=protein_coding;havana_transcript=OTTHUMT00000343056;havana_version=1;tag=basic;transcript_id=ENST00000455089;version=1
+7	ensembl_havana	five_prime_UTR	55086714	55086970	.	+	.	Parent=transcript:ENST00000455089
+7	ensembl_havana	exon	55086714	55087058	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001633131;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00001633131;rank=1;version=1
+7	ensembl_havana	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl_havana	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl_havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=4;version=1
+7	ensembl_havana	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=5;version=1
+7	ensembl_havana	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=6;version=1
+7	ensembl_havana	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=7;version=1
+7	ensembl_havana	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=8;version=1
+7	ensembl_havana	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=9;version=1
+7	ensembl_havana	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=10;version=1
+7	ensembl_havana	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=11;version=1
+7	ensembl_havana	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=12;version=1
+7	ensembl_havana	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=13;version=1
+7	ensembl_havana	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=14;version=1
+7	ensembl_havana	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55238868	55238906	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001768076;constitutive=0;ensembl_end_phase=2;ensembl_phase=2;exon_id=ENSE00001768076;rank=15;version=1
+7	ensembl_havana	CDS	55238868	55238906	.	+	1	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55240676	55240817	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00002684637;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00002684637;rank=16;version=1
+7	ensembl_havana	CDS	55240676	55240817	.	+	1	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55241614	55241736	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001778519;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001778519;rank=17;version=1
+7	ensembl_havana	CDS	55241614	55241736	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55242415	55242513	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001756460;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001756460;rank=18;version=1
+7	ensembl_havana	CDS	55242415	55242513	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55248986	55249171	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001601336;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001601336;rank=19;version=1
+7	ensembl_havana	CDS	55248986	55249171	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55259412	55259567	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001681524;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001681524;rank=20;version=1
+7	ensembl_havana	CDS	55259412	55259567	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55260459	55260534	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001631695;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001631695;rank=21;version=1
+7	ensembl_havana	CDS	55260459	55260534	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55266410	55266556	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00003625684;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00003625684;rank=22;version=1
+7	ensembl_havana	CDS	55266410	55266556	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55268009	55268106	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001790701;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001790701;rank=23;version=1
+7	ensembl_havana	CDS	55268009	55268106	.	+	2	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55268881	55269048	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001801208;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001801208;rank=24;version=1
+7	ensembl_havana	CDS	55268881	55269048	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55269428	55269475	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001773562;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001773562;rank=25;version=1
+7	ensembl_havana	CDS	55269428	55269475	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	CDS	55270210	55270458	.	+	0	ID=CDS:ENSP00000415559;Parent=transcript:ENST00000455089;protein_id=ENSP00000415559
+7	ensembl_havana	exon	55270210	55270769	.	+	.	Parent=transcript:ENST00000455089;Name=ENSE00001610532;constitutive=0;ensembl_end_phase=-1;ensembl_phase=0;exon_id=ENSE00001610532;rank=26;version=1
+7	ensembl_havana	three_prime_UTR	55270459	55270769	.	+	.	Parent=transcript:ENST00000455089
+7	ensembl_havana	mRNA	55086725	55236328	.	+	.	ID=transcript:ENST00000342916;Parent=gene:ENSG00000146648;Name=EGFR-003;biotype=protein_coding;ccdsid=CCDS5516.1;havana_transcript=OTTHUMT00000251458;havana_version=2;tag=basic;transcript_id=ENST00000342916;version=3
+7	ensembl_havana	five_prime_UTR	55086725	55086970	.	+	.	Parent=transcript:ENST00000342916
+7	ensembl_havana	exon	55086725	55087058	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00002726154;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00002726154;rank=1;version=1
+7	ensembl_havana	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl_havana	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl_havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl_havana	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl_havana	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl_havana	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl_havana	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl_havana	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl_havana	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=10;version=1
+7	ensembl_havana	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=11;version=1
+7	ensembl_havana	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=12;version=1
+7	ensembl_havana	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=13;version=1
+7	ensembl_havana	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=14;version=1
+7	ensembl_havana	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=15;version=1
+7	ensembl_havana	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	CDS	55236216	55236222	.	+	1	ID=CDS:ENSP00000342376;Parent=transcript:ENST00000342916;protein_id=ENSP00000342376
+7	ensembl_havana	exon	55236216	55236328	.	+	.	Parent=transcript:ENST00000342916;Name=ENSE00001802824;constitutive=0;ensembl_end_phase=-1;ensembl_phase=2;exon_id=ENSE00001802824;rank=16;version=1
+7	ensembl_havana	three_prime_UTR	55236223	55236328	.	+	.	Parent=transcript:ENST00000342916
+7	ensembl_havana	mRNA	55086726	55238738	.	+	.	ID=transcript:ENST00000344576;Parent=gene:ENSG00000146648;Name=EGFR-002;biotype=protein_coding;ccdsid=CCDS5515.1;havana_transcript=OTTHUMT00000251457;havana_version=1;tag=basic;transcript_id=ENST00000344576;version=2
+7	ensembl_havana	five_prime_UTR	55086726	55086970	.	+	.	Parent=transcript:ENST00000344576
+7	ensembl_havana	exon	55086726	55087058	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001935092;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00001935092;rank=1;version=1
+7	ensembl_havana	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl_havana	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl_havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl_havana	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl_havana	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl_havana	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl_havana	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl_havana	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl_havana	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=10;version=1
+7	ensembl_havana	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=11;version=1
+7	ensembl_havana	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=12;version=1
+7	ensembl_havana	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=13;version=1
+7	ensembl_havana	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=14;version=1
+7	ensembl_havana	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=15;version=1
+7	ensembl_havana	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	CDS	55238000	55238237	.	+	1	ID=CDS:ENSP00000345973;Parent=transcript:ENST00000344576;protein_id=ENSP00000345973
+7	ensembl_havana	exon	55238000	55238738	.	+	.	Parent=transcript:ENST00000344576;Name=ENSE00001371541;constitutive=0;ensembl_end_phase=-1;ensembl_phase=2;exon_id=ENSE00001371541;rank=16;version=1
+7	ensembl_havana	three_prime_UTR	55238238	55238738	.	+	.	Parent=transcript:ENST00000344576
+7	ensembl_havana	mRNA	55086727	55224644	.	+	.	ID=transcript:ENST00000420316;Parent=gene:ENSG00000146648;Name=EGFR-005;biotype=protein_coding;ccdsid=CCDS47587.1;havana_transcript=OTTHUMT00000343057;havana_version=1;tag=basic;transcript_id=ENST00000420316;version=2
+7	ensembl_havana	five_prime_UTR	55086727	55086970	.	+	.	Parent=transcript:ENST00000420316
+7	ensembl_havana	exon	55086727	55087058	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001918712;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00001918712;rank=1;version=1
+7	ensembl_havana	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl_havana	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl_havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl_havana	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl_havana	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl_havana	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl_havana	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl_havana	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl_havana	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	CDS	55224452	55224536	.	+	1	ID=CDS:ENSP00000413843;Parent=transcript:ENST00000420316;protein_id=ENSP00000413843
+7	ensembl_havana	exon	55224452	55224644	.	+	.	Parent=transcript:ENST00000420316;Name=ENSE00001639282;constitutive=0;ensembl_end_phase=-1;ensembl_phase=2;exon_id=ENSE00001639282;rank=10;version=2
+7	ensembl_havana	three_prime_UTR	55224537	55224644	.	+	.	Parent=transcript:ENST00000420316
+7	ensembl_havana	mRNA	55086794	55279321	.	+	.	ID=transcript:ENST00000275493;Parent=gene:ENSG00000146648;Name=EGFR-001;biotype=protein_coding;ccdsid=CCDS5514.1;havana_transcript=OTTHUMT00000251456;havana_version=2;tag=basic;transcript_id=ENST00000275493;version=2
+7	ensembl_havana	five_prime_UTR	55086794	55086970	.	+	.	Parent=transcript:ENST00000275493
+7	ensembl_havana	exon	55086794	55087058	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001841347;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00001841347;rank=1;version=1
+7	ensembl_havana	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl_havana	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl_havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl_havana	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl_havana	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl_havana	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl_havana	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl_havana	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl_havana	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=10;version=1
+7	ensembl_havana	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=11;version=1
+7	ensembl_havana	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=12;version=1
+7	ensembl_havana	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=13;version=1
+7	ensembl_havana	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=14;version=1
+7	ensembl_havana	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=15;version=1
+7	ensembl_havana	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55238868	55238906	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001768076;constitutive=0;ensembl_end_phase=2;ensembl_phase=2;exon_id=ENSE00001768076;rank=16;version=1
+7	ensembl_havana	CDS	55238868	55238906	.	+	1	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55240676	55240817	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00002684637;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00002684637;rank=17;version=1
+7	ensembl_havana	CDS	55240676	55240817	.	+	1	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55241614	55241736	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001778519;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001778519;rank=18;version=1
+7	ensembl_havana	CDS	55241614	55241736	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55242415	55242513	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001756460;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001756460;rank=19;version=1
+7	ensembl_havana	CDS	55242415	55242513	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55248986	55249171	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001601336;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001601336;rank=20;version=1
+7	ensembl_havana	CDS	55248986	55249171	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55259412	55259567	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001681524;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001681524;rank=21;version=1
+7	ensembl_havana	CDS	55259412	55259567	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55260459	55260534	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001631695;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001631695;rank=22;version=1
+7	ensembl_havana	CDS	55260459	55260534	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55266410	55266556	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00003625684;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00003625684;rank=23;version=1
+7	ensembl_havana	CDS	55266410	55266556	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55268009	55268106	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001790701;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001790701;rank=24;version=1
+7	ensembl_havana	CDS	55268009	55268106	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55268881	55269048	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001801208;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001801208;rank=25;version=1
+7	ensembl_havana	CDS	55268881	55269048	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55269428	55269475	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001773562;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001773562;rank=26;version=1
+7	ensembl_havana	CDS	55269428	55269475	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55270210	55270318	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001795780;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001795780;rank=27;version=1
+7	ensembl_havana	CDS	55270210	55270318	.	+	0	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	CDS	55272949	55273310	.	+	2	ID=CDS:ENSP00000275493;Parent=transcript:ENST00000275493;protein_id=ENSP00000275493
+7	ensembl_havana	exon	55272949	55279321	.	+	.	Parent=transcript:ENST00000275493;Name=ENSE00001245887;constitutive=0;ensembl_end_phase=-1;ensembl_phase=1;exon_id=ENSE00001245887;rank=28;version=4
+7	ensembl_havana	three_prime_UTR	55273311	55279321	.	+	.	Parent=transcript:ENST00000275493
+7	ensembl	mRNA	55086811	55324313	.	+	.	ID=transcript:ENST00000442591;Parent=gene:ENSG00000146648;Name=EGFR-201;biotype=protein_coding;tag=basic;transcript_id=ENST00000442591;version=1
+7	ensembl	five_prime_UTR	55086811	55086970	.	+	.	Parent=transcript:ENST00000442591
+7	ensembl	exon	55086811	55087058	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001665790;constitutive=0;ensembl_end_phase=1;ensembl_phase=-1;exon_id=ENSE00001665790;rank=1;version=1
+7	ensembl	CDS	55086971	55087058	.	+	0	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00003541288;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00003541288;rank=2;version=1
+7	ensembl	CDS	55209979	55210130	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=10;version=1
+7	ensembl	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=11;version=1
+7	ensembl	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=12;version=1
+7	ensembl	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=13;version=1
+7	ensembl	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=14;version=1
+7	ensembl	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=15;version=1
+7	ensembl	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55238868	55238906	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001768076;constitutive=0;ensembl_end_phase=2;ensembl_phase=2;exon_id=ENSE00001768076;rank=16;version=1
+7	ensembl	CDS	55238868	55238906	.	+	1	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	CDS	55240539	55240593	.	+	1	ID=CDS:ENSP00000410031;Parent=transcript:ENST00000442591;protein_id=ENSP00000410031
+7	ensembl	exon	55240539	55240621	.	+	.	Parent=transcript:ENST00000442591;Name=ENSE00001741534;constitutive=0;ensembl_end_phase=-1;ensembl_phase=2;exon_id=ENSE00001741534;rank=17;version=1
+7	ensembl	three_prime_UTR	55240594	55240621	.	+	.	Parent=transcript:ENST00000442591
+7	havana	processed_transcript	55086824	55111742	.	+	.	ID=transcript:ENST00000459688;Parent=gene:ENSG00000146648;Name=EGFR-007;biotype=processed_transcript;havana_transcript=OTTHUMT00000343059;havana_version=1;transcript_id=ENST00000459688;version=1
+7	havana	exon	55086824	55087058	.	+	.	Parent=transcript:ENST00000459688;Name=ENSE00001846611;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001846611;rank=1;version=1
+7	havana	exon	55111526	55111742	.	+	.	Parent=transcript:ENST00000459688;Name=ENSE00001812253;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001812253;rank=2;version=1
+7	havana	processed_transcript	55086844	55187094	.	+	.	ID=transcript:ENST00000463948;Parent=gene:ENSG00000146648;Name=EGFR-008;biotype=processed_transcript;havana_transcript=OTTHUMT00000343060;havana_version=1;transcript_id=ENST00000463948;version=1
+7	havana	exon	55086844	55087058	.	+	.	Parent=transcript:ENST00000463948;Name=ENSE00001853985;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001853985;rank=1;version=1
+7	havana	exon	55186749	55187094	.	+	.	Parent=transcript:ENST00000463948;Name=ENSE00001817633;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001817633;rank=2;version=1
+7	havana	mRNA	55177416	55214417	.	+	.	ID=transcript:ENST00000450046;Parent=gene:ENSG00000146648;Name=EGFR-009;biotype=protein_coding;havana_transcript=OTTHUMT00000343061;havana_version=1;transcript_id=ENST00000450046;version=1
+7	havana	exon	55177416	55177651	.	+	.	Parent=transcript:ENST00000450046;Name=ENSE00001740709;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001740709;rank=1;version=1
+7	havana	five_prime_UTR	55177416	55177651	.	+	.	Parent=transcript:ENST00000450046
+7	havana	five_prime_UTR	55209979	55210049	.	+	.	Parent=transcript:ENST00000450046
+7	havana	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000450046;Name=ENSE00003540437;constitutive=0;ensembl_end_phase=0;ensembl_phase=-1;exon_id=ENSE00003540437;rank=2;version=1
+7	havana	CDS	55210050	55210130	.	+	0	ID=CDS:ENSP00000413354;Parent=transcript:ENST00000450046;protein_id=ENSP00000413354
+7	havana	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000450046;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	havana	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000413354;Parent=transcript:ENST00000450046;protein_id=ENSP00000413354
+7	havana	exon	55214299	55214417	.	+	.	Parent=transcript:ENST00000450046;Name=ENSE00001688856;constitutive=0;ensembl_end_phase=-1;ensembl_phase=1;exon_id=ENSE00001688856;rank=4;version=1
+7	havana	CDS	55214299	55214417	.	+	2	ID=CDS:ENSP00000413354;Parent=transcript:ENST00000450046;protein_id=ENSP00000413354
+7	ensembl	mRNA	55177540	55273591	.	+	.	ID=transcript:ENST00000454757;Parent=gene:ENSG00000146648;Name=EGFR-202;biotype=protein_coding;tag=basic;transcript_id=ENST00000454757;version=2
+7	ensembl	exon	55177540	55177651	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00002296313;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00002296313;rank=1;version=1
+7	ensembl	five_prime_UTR	55177540	55177651	.	+	.	Parent=transcript:ENST00000454757
+7	ensembl	five_prime_UTR	55209979	55210049	.	+	.	Parent=transcript:ENST00000454757
+7	ensembl	exon	55209979	55210130	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00003540437;constitutive=0;ensembl_end_phase=0;ensembl_phase=-1;exon_id=ENSE00003540437;rank=2;version=1
+7	ensembl	CDS	55210050	55210130	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55210998	55211181	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001704157;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001704157;rank=3;version=1
+7	ensembl	CDS	55210998	55211181	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55214299	55214433	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001798125;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001798125;rank=4;version=1
+7	ensembl	CDS	55214299	55214433	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55218987	55219055	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001683983;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001683983;rank=5;version=1
+7	ensembl	CDS	55218987	55219055	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55220239	55220357	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001652975;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001652975;rank=6;version=1
+7	ensembl	CDS	55220239	55220357	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55221704	55221845	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001623732;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001623732;rank=7;version=1
+7	ensembl	CDS	55221704	55221845	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55223523	55223639	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001751179;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00001751179;rank=8;version=1
+7	ensembl	CDS	55223523	55223639	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55224226	55224352	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084929;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084929;rank=9;version=1
+7	ensembl	CDS	55224226	55224352	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55224452	55224525	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084931;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084931;rank=10;version=1
+7	ensembl	CDS	55224452	55224525	.	+	1	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55225356	55225446	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084926;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084926;rank=11;version=1
+7	ensembl	CDS	55225356	55225446	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55227832	55228031	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084941;constitutive=0;ensembl_end_phase=1;ensembl_phase=2;exon_id=ENSE00001084941;rank=12;version=1
+7	ensembl	CDS	55227832	55228031	.	+	1	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55229192	55229324	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084939;constitutive=0;ensembl_end_phase=2;ensembl_phase=1;exon_id=ENSE00001084939;rank=13;version=1
+7	ensembl	CDS	55229192	55229324	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55231426	55231516	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001084927;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00001084927;rank=14;version=1
+7	ensembl	CDS	55231426	55231516	.	+	1	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55232973	55233130	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001627115;constitutive=0;ensembl_end_phase=2;ensembl_phase=0;exon_id=ENSE00001627115;rank=15;version=1
+7	ensembl	CDS	55232973	55233130	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55238868	55238906	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001768076;constitutive=0;ensembl_end_phase=2;ensembl_phase=2;exon_id=ENSE00001768076;rank=16;version=1
+7	ensembl	CDS	55238868	55238906	.	+	1	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55240676	55240817	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00002684637;constitutive=0;ensembl_end_phase=0;ensembl_phase=2;exon_id=ENSE00002684637;rank=17;version=1
+7	ensembl	CDS	55240676	55240817	.	+	1	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55241614	55241736	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001778519;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001778519;rank=18;version=1
+7	ensembl	CDS	55241614	55241736	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55242415	55242513	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001756460;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001756460;rank=19;version=1
+7	ensembl	CDS	55242415	55242513	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55248986	55249171	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001601336;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001601336;rank=20;version=1
+7	ensembl	CDS	55248986	55249171	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55259412	55259567	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001681524;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001681524;rank=21;version=1
+7	ensembl	CDS	55259412	55259567	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55260459	55260534	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001631695;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001631695;rank=22;version=1
+7	ensembl	CDS	55260459	55260534	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55266410	55266556	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00003625684;constitutive=0;ensembl_end_phase=1;ensembl_phase=1;exon_id=ENSE00003625684;rank=23;version=1
+7	ensembl	CDS	55266410	55266556	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55268009	55268106	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001790701;constitutive=0;ensembl_end_phase=0;ensembl_phase=1;exon_id=ENSE00001790701;rank=24;version=1
+7	ensembl	CDS	55268009	55268106	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55268881	55269048	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001801208;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001801208;rank=25;version=1
+7	ensembl	CDS	55268881	55269048	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55269428	55269475	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001773562;constitutive=0;ensembl_end_phase=0;ensembl_phase=0;exon_id=ENSE00001773562;rank=26;version=1
+7	ensembl	CDS	55269428	55269475	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55270210	55270318	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001795780;constitutive=0;ensembl_end_phase=1;ensembl_phase=0;exon_id=ENSE00001795780;rank=27;version=1
+7	ensembl	CDS	55270210	55270318	.	+	0	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	CDS	55272949	55273310	.	+	2	ID=CDS:ENSP00000395243;Parent=transcript:ENST00000454757;protein_id=ENSP00000395243
+7	ensembl	exon	55272949	55273591	.	+	.	Parent=transcript:ENST00000454757;Name=ENSE00001789625;constitutive=0;ensembl_end_phase=-1;ensembl_phase=1;exon_id=ENSE00001789625;rank=28;version=1
+7	ensembl	three_prime_UTR	55273311	55273591	.	+	.	Parent=transcript:ENST00000454757
+7	havana	aberrant_processed_transcript	55260504	55268495	.	+	.	ID=transcript:ENST00000485503;Parent=gene:ENSG00000146648;Name=EGFR-010;biotype=retained_intron;havana_transcript=OTTHUMT00000343062;havana_version=1;transcript_id=ENST00000485503;version=1
+7	havana	exon	55260504	55260534	.	+	.	Parent=transcript:ENST00000485503;Name=ENSE00001879915;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001879915;rank=1;version=1
+7	havana	exon	55266410	55266556	.	+	.	Parent=transcript:ENST00000485503;Name=ENSE00003661953;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00003661953;rank=2;version=1
+7	havana	exon	55268009	55268495	.	+	.	Parent=transcript:ENST00000485503;Name=ENSE00001911831;constitutive=0;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001911831;rank=3;version=1
+###
+7	Eponine	biological_region	55086735	55086742	0.999	+	.	logic_name=eponine
+7	Eponine	biological_region	55086773	55086776	0.999	+	.	logic_name=eponine
+7	Eponine	biological_region	55086863	55086872	0.999	-	.	logic_name=eponine
+7	Eponine	biological_region	55086905	55086905	0.999	-	.	logic_name=eponine
+7	Eponine	biological_region	55087078	55087087	0.999	+	.	logic_name=eponine
+7	Eponine	biological_region	55087205	55087208	0.999	-	.	logic_name=eponine
+7	Eponine	biological_region	55087323	55087328	0.999	-	.	logic_name=eponine
+7	firstef	biological_region	55087515	55087644	1	-	.	external_name=rank %3D 1;logic_name=firstef
+7	Eponine	biological_region	55087534	55087534	0.999	-	.	logic_name=eponine
+7	Eponine	biological_region	55087572	55087574	0.999	-	.	logic_name=eponine
+7	Eponine	biological_region	55087977	55087979	0.999	+	.	logic_name=eponine
+7	firstef	biological_region	55101320	55101390	0.597	-	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55147003	55147083	0.862	+	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55236733	55237478	0.542	-	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55239038	55239201	0.531	-	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55240752	55241736	0.782	+	.	external_name=rank %3D 1;logic_name=firstef
+7	havana	gene	55247443	55256627	.	-	.	ID=gene:ENSG00000224057;Name=EGFR-AS1;biotype=antisense;description=EGFR antisense RNA 1 [Source:HGNC Symbol%3BAcc:40207];gene_id=ENSG00000224057;logic_name=havana;version=1
+7	havana	transcript	55247443	55256627	.	-	.	ID=transcript:ENST00000442411;Parent=gene:ENSG00000224057;Name=EGFR-AS1-001;biotype=antisense;havana_transcript=OTTHUMT00000343091;havana_version=1;tag=basic;transcript_id=ENST00000442411;version=1
+7	havana	exon	55247443	55250170	.	-	.	Parent=transcript:ENST00000442411;Name=ENSE00001787893;constitutive=1;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001787893;rank=2;version=1
+7	havana	exon	55256550	55256627	.	-	.	Parent=transcript:ENST00000442411;Name=ENSE00001642805;constitutive=1;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001642805;rank=1;version=1
+###
+7	firstef	biological_region	55255626	55255942	0.525	-	.	external_name=rank %3D 1;logic_name=firstef
+7	firstef	biological_region	55257674	55257789	0.753	-	.	external_name=rank %3D 1;logic_name=firstef
+7	cpg	biological_region	55287343	55288887	706	.	.	external_name=oe %3D 0.75;logic_name=cpg
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
+###
