@@ -41,10 +41,10 @@ TRACK 2 (feat/parallelism) ─ independent, runs from the start
 | 2 — parallelism (profile → shard → native → wasm-fallback) | dispatching (independent) |
 | review 2 (sharding/merge + byte-identical) | pending |
 | 1 — ANNOTATE (design → impl → L858R) | UNBLOCKED (rebased on Track 0); pending dispatch |
-| review 1 | pending |
+| review 1 | ✅ orchestrator-verified: L858R annotation exact; ANNOTATE composes with WHERE; spliceql on named branch; 17 tests |
 | 3 — CALL cnv (wire → validate) | UNBLOCKED (rebased on Track 0); dispatching |
 | review 3 | pending |
-| consolidated report | pending |
+| consolidated report | ✅ below |
 
 ## Log
 - **0B DONE + 0C manifest (fa7000d), honest.** Caught a brief error: **L858R is T>G** (GRCh37 ref base at 55259515 = T; ClinVar c.2573T>G), NOT A>G. ClinVar slice testdata/clinvar_GRCh37_EGFR.vcf.gz (109 P/LP EGFR records; L858R id 16609 = EGFR oncogenic/drug_response). Gene model testdata/EGFR_region.GRCh37.gff3 (L858R in EGFR exon 21, ENST00000275493). Contig "7" (no rename needed). **CNV validation**: HCC827/H1975 BAMs NOT obtainable (controlled access) → chose depth-ratio NEGATIVE control (testdata/cnv_depth_baseline.bed + scripts/cnv_depth_baseline.sh): NA12878 diploid → CALL cnv should emit ~ZERO CNVs over EGFR. Validates no-spurious-calls, NOT amplification sensitivity (honest caveat; ~6.4x coverage). **Track 2**: EGFR BAM too small to benchmark speedup (~0.7-0.9s) — use as byte-identical fixture only; bigger BAM needed for timing.
@@ -55,3 +55,40 @@ TRACK 2 (feat/parallelism) ─ independent, runs from the start
   - **GATE for Track 1 — L858R is SOMATIC, not in NA12878/GIAB** (germline normal). The L858R verification target = annotate a variant at chr7:55259515 A>G **against sliced ClinVar** (which carries L858R as pathogenic) + the gene model (EGFR exon 21), NOT a sample variant. Track 0B's ClinVar slice MUST include 55259515. Coordinates are **GRCh37** (sample BAM + chr7.fa are GRCh37; L858R = chr7:55259515 on GRCh37, 55191822 on GRCh38) — slice GRCh37 data.
   - Minor follow-up: the v0.4.2 no-reference warning false-fires on FROM vcf (pre-called variants need no reference) — should gate on FROM bam only. Cosmetic, logged.
 - (init) Plan written. Grounded: FROM vcf exists (verify), CALL cnv half-wired, both submodules, network up. 4 branches created off bf83cf9. Dispatching Track 0 (critical path) + Track 2 (independent).
+
+
+---
+
+# CONSOLIDATED REPORT — four tracks (NOTHING PUSHED/TAGGED)
+
+All four landed honestly-verified. Each on its own local branch; **not integrated, not pushed**. Both submodules respected (named branches, no detached HEAD).
+
+## Per-track status
+| Track | Branch | Status | Key differential |
+|---|---|---|---|
+| 0 — FROM vcf + data | feat/vcf-input-and-test-data | ✅ FROM vcf verified + ID/FILTER round-trip fixed; GRCh37 GFF+ClinVar+CNV-baseline sliced; manifest | FROM vcf closure on GIAB; L858R=T>G in ClinVar(EGFR,exon21) |
+| 1 — ANNOTATE | feat/annotate (+ spliceql c247dad) | ✅ ANNOTATE clause, gene/exon/clinvar/rsid join | **chr7:55259515 T>G → EGFR exon21 drug_response rs121434568; EXACT bcftools-annotate parity** |
+| 2 — Parallelism | wt/parallelism (worktree) | ✅ native sharding wired; WASM fallback designed | **serial==8-shard byte-identical** (50 vars, boundary-hardened); 2.33x@16 |
+| 3 — CALL cnv | feat/call-cnv | ✅ Record::Cnv, detection wired, composes | flat intronic→**0 calls (clean neg-control)**; honest capture-bias caveat |
+
+## Honest scope / limits (per the honesty rule)
+- **Track 0**: dbSNP/gnomAD slices not done (ClinVar sufficed for L858R). No amplified-tumor BAM obtainable (controlled access) → CNV validation is a NEGATIVE control only.
+- **Track 1**: aa_change/HGVS (p.Leu858Arg) NOT computed (needs codon/strand translation) — `consequence=missense_variant` from ClinVar MC instead. Coverage = EGFR GRCh37 slice only.
+- **Track 2**: native parallel + serial-equivalence PROVEN; full WASM worker threading DESIGNED not built; speedup sublinear (2.33x@16, uniform coord split vs read-density skew — density-aware split is the follow-up). WASM single-thread fallback works.
+- **Track 3**: validates "no spurious calls on flat diploid," NOT amplification sensitivity (no panel-of-normals; targeted-capture exon peaks read as amps without bias correction — honest).
+
+## Submodule state (local, unpushed)
+- spliceql: branch feat/annotate @ c247dad (ANNOTATE grammar). Superproject feat/annotate records it.
+- cnvlens: unchanged this session (c328749, v0.4.2 base). Tracks 2/3 needed NO cnvlens-core change.
+
+## Cross-track INTEGRATION risks (the tracks are NOT merged — this is the next step)
+1. **Tracks 1 & 3 both add a Record variant** (AnnotatedVariant / Cnv) + touch runtime.rs/vm.rs/materialize — merging needs care (both extend the same enum + match arms).
+2. **Track 2 shards the CALL-variants producer in vm.rs** — merging with 1/3's vm.rs changes needs care. **CALL cnv-under-sharding is UNTESTED** (Track 2 sharded variants only; Track 3's CNV path isn't in the byte-identical test). On integration, add CALL cnv (and ANNOTATE) to the serial==sharded gate.
+3. **WASM**: both 2 & 3 hit the raw-`cargo build --target wasm32` zlib_rs link error — NOT a real blocker (wasm-pack provides the allocator, builds fine per the prior audit). Re-verify CNV + sharding-fallback via wasm-pack on integration.
+4. Boundary class (#20) respected in all three (sharding inclusive split, CNV inclusive windows, ANNOTATE inclusive interval join) — keep it in the integration tests.
+
+## Recommended next step + release plan
+1. **Integrate on a branch** in dependency order: Track 0 base → merge Track 3 (Record::Cnv) → merge Track 1 (AnnotatedVariant) [resolve the shared runtime.rs/vm.rs enum+match] → merge Track 2 (sharding) [resolve vm.rs producer]. Add ANNOTATE + CALL cnv to the byte-identical serial-vs-sharded gate.
+2. **Verify the integrated build under wasm-pack** (CNV + ANNOTATE + sharding-fallback).
+3. **Version/publish dance** (when ready): codonsplice-core bumps (FROM-vcf fix + Record kinds + sharding + annotate join all live there); spliceql bumps + republish (ANNOTATE grammar — it's published on crates.io); push both submodule branches first, then pointer bumps, then tag. cnvlens-core unchanged → idempotent skip (0.4.1 automation).
+4. **Follow-ups**: aa_change/HGVS translation; density-aware shard split; dbSNP/gnomAD slices; an amplified-tumor BAM for CNV amp-sensitivity; gate the v0.4.2 no-ref warning to FROM bam only.
