@@ -156,7 +156,7 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 | isec | feat/isec e5dabc7 (cnvlens 48bf8f1, spliceql c34cada) | ✅ VERIFIED |
 | multi-allelic | feat/multiallelic 0e0d83f (cnvlens 5524886, spliceql ef15948) | ✅ VERIFIED |
 | density-shards | feat/density f05e934 (+orch review fix) | ✅ VERIFIED |
-| PAIRED WITH | feat/paired (wt cs-paired, on isec) | 🟡 wave-2 agent running |
+| PAIRED WITH | feat/paired 12be95d (spliceql c7216e9) | ✅ VERIFIED |
 | WASM workers | feat/wasm-threads (wt cs-wasm, on density) | 🟡 wave-2 agent running |
 
 ## DISK CRASH + recovery (logged): wave-1 agents died when the process exited (full-disk EROFS from target/ dirs at 90GB). User compacted the WSL vhdx, hand-committed all 4 wave-1 features on their feat/<name> branches with submodules branched (not detached) + pointers set. Disk now 889G free. Lesson reinforced: worktree target/ dirs are the disk risk — freed all 4 wave-1 targets after review.
@@ -167,8 +167,12 @@ Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends Annotat
 - **multi-allelic** (cs-multiallelic): `split_differential_vs_live_bcftools` PASS — live `bcftools norm -m - -f chr7.fa`, record-set identical + golden tracks live tool; per-allele AF apportioned (0.3/0.2/0.1) + indel. Surface `FROM vcf ... SPLIT CALL variants`.
 - **density** (cs-density): 10 shard unit tests (BAI-linear-index density estimate, balance, fallback, merge-matches-serial). REVIEW GAP found+closed: the density split path wasn't in an end-to-end byte-identical gate (only uniform + hand-placed-uneven were). Added `density_split_from_bai_is_byte_identical_to_serial` (f05e934): proves BAI-placed cuts are genuinely non-uniform for the EGFR BAM AND byte-identical to serial — non-vacuous. PASS.
 
+## WAVE-2 review — PAIRED WITH ✅ VERIFIED (orchestrator re-ran)
+- Surface `FROM vcf "t" PAIRED WITH vcf "n" [MODE somatic|germline]` (default somatic). **Reuse confirmed STRUCTURALLY**: core commit = paired_tests.rs ONLY (no engine code); grammar lowers to the SAME IsecClause → reuses `cnvlens_core::vcf::isec` / OpenIsec. Oracle: `somatic_matches_bcftools_isec_private_tumor` PASS (ran live bcftools, no skip) — somatic==isec 0000.vcf, germline==0002.vcf, exact (chrom,pos,ref,alt) incl. 55249100 T-vs-C edge. spliceql c7216e9 on feat/paired (not detached).
+- WASM workers (cs-wasm): still running.
+
 ## INTEGRATION pointer map (submodule branches live in separate clones — Phase-2 must gather them):
-- spliceql branches: feat/hgvs(c247dad, builtins in core not grammar), feat/isec c34cada, feat/multiallelic ef15948, feat/paired (from c34cada), others ae6e0b9.
+- spliceql branches: feat/hgvs c247dad(builtins in core), feat/isec c34cada, feat/multiallelic ef15948, feat/paired c7216e9, feat/wasm-threads(pending), others ae6e0b9.
 - cnvlens branches: feat/isec 48bf8f1, feat/multiallelic 5524886, feat/paired (from 48bf8f1), feat/parallel-cnv e11edd9; hgvs/density unchanged c328749.
 
 ## Worktree recipe (PROVEN — solves the Track-2 submodule fetch failure)
