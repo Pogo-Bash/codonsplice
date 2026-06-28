@@ -613,8 +613,14 @@ impl Vm {
                 })
             }
         };
+        // Capture the source contigs (for VCF `##contig=<ID=…,length=…>`) before
+        // materializing consumes the cursor.
+        let contigs = {
+            let c = cursor.lock().unwrap();
+            contigs_from_dataset(&c.dataset)
+        };
         let records = materialize(cursor, "").map_err(VmError::core)?;
-        let bytes = serialize_records(fmt.clone(), &records)?;
+        let bytes = serialize_records(fmt.clone(), &records, &contigs)?;
         self.io.write_file(&path, &bytes).map_err(VmError::io)?;
         self.wrote = Some(format!(
             "wrote {} record(s) to {} ({})",
@@ -1090,10 +1096,30 @@ fn format_header(refs: &[(String, usize)]) -> String {
 }
 
 /// Serialize materialized records into the target output format's bytes.
-fn serialize_records(fmt: Format, records: &[Record]) -> Result<Vec<u8>, VmError> {
+/// The `(name, length)` contigs of a dataset, for VCF `##contig` headers. Reads
+/// them from the BAM header when the source is a BAM; empty otherwise (the writer
+/// then emits `##contig=<ID=…>` without a length).
+fn contigs_from_dataset(ds: &Dataset) -> Vec<(String, u64)> {
+    match ds.bam_bytes() {
+        Some(bytes) => match bam::read_header(bytes) {
+            Ok(header) => reference_list(&header)
+                .into_iter()
+                .map(|(name, len)| (name, len as u64))
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        None => Vec::new(),
+    }
+}
+
+fn serialize_records(
+    fmt: Format,
+    records: &[Record],
+    contigs: &[(String, u64)],
+) -> Result<Vec<u8>, VmError> {
     let label = format_label(&fmt);
     match fmt {
-        Format::Vcf => Ok(records_to_vcf(records).into_bytes()),
+        Format::Vcf => Ok(records_to_vcf(records, contigs).into_bytes()),
         Format::Bed => Ok(records_to_bed(records).into_bytes()),
         // Real sinks: NDJSON (one object per line) and TSV (header + rows).
         Format::Json => Ok(records_to_ndjson(records).into_bytes()),
@@ -1218,12 +1244,36 @@ fn runtime_to_json(v: &RuntimeValue) -> serde_json::Value {
     }
 }
 
-fn records_to_vcf(records: &[Record]) -> String {
+fn records_to_vcf(records: &[Record], contigs: &[(String, u64)]) -> String {
     // Native fast path: a homogeneous variant stream renders as a standard VCF.
     if records.iter().all(|r| matches!(r, Record::Variant(_))) {
-        let mut out = String::from(
-            "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+        let mut out = String::from("##fileformat=VCFv4.2\n");
+        // ##contig lines for every contig referenced by the records, in
+        // first-seen order, with `length` from the source header when known.
+        // bcftools norm requires these (and the ##INFO declarations below) — an
+        // output that uses DP/AF in INFO without declaring them is not spec
+        // compliant and breaks downstream tools.
+        let mut seen: Vec<&str> = Vec::new();
+        for r in records {
+            if let Record::Variant(v) = r {
+                if !seen.contains(&v.chrom.as_str()) {
+                    seen.push(v.chrom.as_str());
+                }
+            }
+        }
+        for c in &seen {
+            match contigs.iter().find(|(n, _)| n == c) {
+                Some((n, len)) => out.push_str(&format!("##contig=<ID={n},length={len}>\n")),
+                None => out.push_str(&format!("##contig=<ID={c}>\n")),
+            }
+        }
+        out.push_str(
+            "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total read depth at the site\">\n",
         );
+        out.push_str(
+            "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Alternate allele frequency\">\n",
+        );
+        out.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
         for r in records {
             if let Record::Variant(v) = r {
                 out.push_str(&format!(

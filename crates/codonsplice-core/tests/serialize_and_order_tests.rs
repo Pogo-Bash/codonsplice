@@ -230,3 +230,23 @@ fn into_vcf_unchanged_regression() {
     assert!(vcf.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"));
     assert_eq!(data_rows(&vcf).len(), count, "VCF body row count == reported count");
 }
+
+#[test]
+fn into_vcf_emits_contig_and_info_headers() {
+    // The variant VCF must declare ##contig (with the BAM contig length) and the
+    // ##INFO fields it uses (DP, AF), or bcftools norm rejects it as non-spec.
+    let (_count, vcf) = run_into("vcf_hdr", "vcf", r#"WHERE chr = "7" CALL variants LIMIT 3"#);
+    assert!(
+        vcf.contains("##contig=<ID=7,length=159138663>"),
+        "expected ##contig with length, got:\n{}",
+        vcf.lines().take(6).collect::<Vec<_>>().join("\n")
+    );
+    assert!(vcf.contains("##INFO=<ID=DP,Number=1,Type=Integer"), "missing ##INFO DP:\n{vcf}");
+    assert!(vcf.contains("##INFO=<ID=AF,Number=A,Type=Float"), "missing ##INFO AF:\n{vcf}");
+    // Header order: ##fileformat, then ##contig, then ##INFO, then #CHROM.
+    let fileformat = vcf.find("##fileformat").unwrap();
+    let contig = vcf.find("##contig").unwrap();
+    let info = vcf.find("##INFO").unwrap();
+    let chrom = vcf.find("#CHROM").unwrap();
+    assert!(fileformat < contig && contig < info && info < chrom, "header lines out of order");
+}
