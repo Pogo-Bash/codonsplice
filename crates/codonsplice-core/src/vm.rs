@@ -1326,9 +1326,15 @@ fn records_to_vcf(records: &[Record], contigs: &[(String, u64)]) -> String {
         out.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
         for r in records {
             if let Record::Variant(v) = r {
+                // Preserve the ID and FILTER columns the reader captured (a
+                // VCF->VCF round-trip must not lose them); pileup-called
+                // variants leave both `None`, rendering as the VCF defaults
+                // "." and "PASS".
+                let id = v.id.as_deref().filter(|s| !s.is_empty()).unwrap_or(".");
+                let filter = v.filter.as_deref().filter(|s| !s.is_empty()).unwrap_or("PASS");
                 out.push_str(&format!(
-                    "{}\t{}\t.\t{}\t{}\t{:.1}\tPASS\tDP={};AF={:.4}\n",
-                    v.chrom, v.pos, v.ref_base, v.alt, v.qual, v.depth, v.allele_freq
+                    "{}\t{}\t{}\t{}\t{}\t{:.1}\t{}\tDP={};AF={:.4}\n",
+                    v.chrom, v.pos, id, v.ref_base, v.alt, v.qual, filter, v.depth, v.allele_freq
                 ));
             }
         }
