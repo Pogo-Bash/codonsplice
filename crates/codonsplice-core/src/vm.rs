@@ -354,7 +354,11 @@ impl Vm {
     fn op_open_source(&mut self) -> Result<(), VmError> {
         let pc0 = self.pc;
         self.pc += 1;
-        let fmt = format_from_byte(self.read_u8());
+        let fmt_byte = self.read_u8();
+        // The high bit carries the `SPLIT` request (multi-allelic split); the
+        // low 7 bits are the format code.
+        let split = fmt_byte & crate::compiler::SPLIT_FLAG != 0;
+        let fmt = format_from_byte(fmt_byte & !crate::compiler::SPLIT_FLAG);
         let path_idx = self.read_u16();
         let path = self.resolve_path(&self.const_str(path_idx), pc0)?;
         let bytes = self.io.read_file(&path).map_err(VmError::io)?;
@@ -369,6 +373,7 @@ impl Vm {
             }
             Format::Vcf => DatasetInner::Vcf {
                 bytes: Arc::new(bytes),
+                split,
             },
             Format::Bed => DatasetInner::Bed {
                 bytes: Arc::new(bytes),
@@ -995,12 +1000,12 @@ fn variant_producer(
     limit: Option<usize>,
 ) -> Result<Vec<Record>, CoreError> {
     if is_vcf {
-        let bytes = match &ds.data {
-            DatasetInner::Vcf { bytes } => bytes,
+        let (bytes, split) = match &ds.data {
+            DatasetInner::Vcf { bytes, split } => (bytes, *split),
             _ => unreachable!("is_vcf implies a VCF dataset"),
         };
         let mut out = Vec::new();
-        for v in vcf::stream_vcf(bytes, region) {
+        for v in vcf::stream_vcf(bytes, region, split) {
             out.push(Record::Variant(v?));
             if let Some(l) = limit {
                 if out.len() >= l {

@@ -248,6 +248,11 @@ impl OpCode {
 }
 
 /// Encode a [`Format`] as the single byte stored by `OPEN_SOURCE`/`WRITE_INTO`.
+/// High bit of an `OPEN_SOURCE` format byte: when set, multi-allelic VCF
+/// records are split into biallelic rows on load (`SPLIT` clause). The low 7
+/// bits remain the [`format_byte`] format code.
+pub const SPLIT_FLAG: u8 = 0x80;
+
 pub fn format_byte(f: &Format) -> u8 {
     match f {
         Format::Bam => 0,
@@ -262,7 +267,7 @@ pub fn format_byte(f: &Format) -> u8 {
 
 /// Decode a format byte back to its mnemonic (for disassembly).
 pub fn format_name(b: u8) -> &'static str {
-    match b {
+    match b & !SPLIT_FLAG {
         0 => "bam",
         1 => "vcf",
         2 => "fasta",
@@ -981,7 +986,7 @@ impl Compiler {
         }
 
         // 1. FROM → OPEN_SOURCE + SCAN
-        self.compile_from(&query.from);
+        self.compile_from(&query.from, query.split);
 
         // 2. WHERE → FILTER (predicate appended after HALT, backpatched here)
         let mut filter_patch: Option<(usize, &Expr)> = None;
@@ -1091,9 +1096,16 @@ impl Compiler {
 
     // ── Clause lowering ──────────────────────────────────────────────────────
 
-    fn compile_from(&mut self, from: &FromClause) {
+    fn compile_from(&mut self, from: &FromClause, split: bool) {
         self.emit(OpCode::OpenSource, from.span);
-        self.code.push(format_byte(&from.format));
+        // The format byte's high bit (`SPLIT_FLAG`) requests multi-allelic
+        // splitting at load time. It is only meaningful for VCF input, so it is
+        // emitted solely for VCF sources; `SPLIT` on any other format is a no-op.
+        let mut fb = format_byte(&from.format);
+        if split && from.format == Format::Vcf {
+            fb |= SPLIT_FLAG;
+        }
+        self.code.push(fb);
         let path_idx = self.intern(Value::Str(Rc::from(from.path.as_str())));
         self.emit_u16(path_idx);
         self.emit(OpCode::Scan, from.span);

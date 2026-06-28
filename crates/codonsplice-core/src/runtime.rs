@@ -137,6 +137,9 @@ pub enum DatasetInner {
     },
     Vcf {
         bytes: Arc<Vec<u8>>,
+        /// `SPLIT` requested: decompose multi-allelic records into biallelic
+        /// rows when streaming (see `cnvlens_core::vcf`).
+        split: bool,
     },
     Fasta {
         seqs: HashMap<String, String>,
