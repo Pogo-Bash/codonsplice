@@ -409,6 +409,13 @@ pub enum CompileError {
         got: &'static str,
         span: Span,
     },
+    /// A row-stream clause (`SELECT`/`ORDER BY`/`LIMIT`) was used on `CALL
+    /// header`, which yields a single record, not a cursor.  These clauses
+    /// compile to cursor-consuming opcodes and crash the VM at runtime (#21).
+    MaterializeOnHeader {
+        clause: &'static str,
+        span: Span,
+    },
     ParseError(ParseError),
 }
 
@@ -431,6 +438,7 @@ impl CompileError {
             CompileError::FunctionArity { .. } => "E007",
             CompileError::FunctionArgType { .. } => "E008",
             CompileError::UnknownField { .. } => "E009",
+            CompileError::MaterializeOnHeader { .. } => "E010",
             CompileError::ParseError(_) => "E000",
         }
     }
@@ -446,7 +454,8 @@ impl CompileError {
             | CompileError::UnknownFunction { span, .. }
             | CompileError::FunctionArity { span, .. }
             | CompileError::FunctionArgType { span, .. }
-            | CompileError::UnknownField { span, .. } => *span,
+            | CompileError::UnknownField { span, .. }
+            | CompileError::MaterializeOnHeader { span, .. } => *span,
             CompileError::ParseError(e) => e.span(),
         }
     }
@@ -489,6 +498,9 @@ impl CompileError {
                 got,
                 ..
             } => format!("function {name:?} argument {arg} must be a {expected}, got {got}"),
+            CompileError::MaterializeOnHeader { clause, .. } => format!(
+                "{clause} is not supported on CALL header — it yields a single record, not a row stream"
+            ),
             CompileError::ParseError(e) => e.to_string(),
         }
     }
@@ -936,6 +948,31 @@ impl Compiler {
         //    silently match nothing at runtime — reject it with a clear error
         //    listing the valid fields instead. #16
         validate_where_fields(query)?;
+
+        // 0b. `CALL header` pushes a single record, not a cursor — the
+        //     row-stream clauses (SELECT/ORDER BY/LIMIT) compile to
+        //     cursor-consuming opcodes and would crash the VM at runtime
+        //     ("expected cursor, got record"). Reject them at compile time. #21
+        if query.call.as_ref().map(|c| c.operation.as_str()) == Some("header") {
+            if let Some(items) = &query.select {
+                return Err(CompileError::MaterializeOnHeader {
+                    clause: "SELECT",
+                    span: items.first().map(|i| i.expr.span()).unwrap_or(query.span),
+                });
+            }
+            if let Some(items) = &query.order {
+                return Err(CompileError::MaterializeOnHeader {
+                    clause: "ORDER BY",
+                    span: items.first().map(|i| i.expr.span()).unwrap_or(query.span),
+                });
+            }
+            if let Some(limit) = &query.limit {
+                return Err(CompileError::MaterializeOnHeader {
+                    clause: "LIMIT",
+                    span: limit.span(),
+                });
+            }
+        }
 
         // 1. FROM → OPEN_SOURCE + SCAN
         self.compile_from(&query.from);
