@@ -201,9 +201,13 @@ jobs:
           out=$(./splice query \
             'FROM bam "sample/NA12878_EGFR.bam" WHERE chr = "7" CALL variants LIMIT 50')
           echo "$out"
-          # A known EGFR-region SNV from the sample (chr7:55002631).
-          echo "$out" | grep -q '"pos":55002631' \
-            || { echo "::error::expected variant chr7:55002631 not found"; exit 1; }
+          # A GIAB-confirmed heterozygous SNV the (CIGAR-correct, v0.4.0+) caller
+          # reliably emits at default thresholds: chr7:55220177 A>G, ~0.5 AF,
+          # depth ~340. (The old chr7:55002631 check encoded the pre-0.4.0
+          # soft-clip over-calling — a low-AF call the precise pileup correctly
+          # drops; see the SNV precision fix 0.036->1.000.)
+          echo "$out" | grep -q '"pos":55220177' \
+            || { echo "::error::expected variant chr7:55220177 not found"; exit 1; }
           echo "✓ compiled binary produced the expected variant"
 
   # ── 4c. winget manifest (Windows package manager) ──────────────────────────
