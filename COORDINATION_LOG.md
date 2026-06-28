@@ -118,3 +118,43 @@ Spec: `docs/.../Correct Parallel CNV`. Submodule: **cnvlens-core `feat/parallel-
 **Task 6 (gate integration) — DEFERRED to the integration session (anti-tangling):** the unified serial-vs-sharded gate + `SPLICE_SHARDS` plumbing live across Track2/Track3, which merge at integration. Deferring loses NO correctness proof (engine gate proves byte-identical windows; detect is a pure fn of windows). Integration plan Task 5 UPDATED with the exact wiring + pointer bump (e11edd9).
 
 **Submodule discipline:** committed on named branch feat/parallel-cnv; superproject pointer bump intentionally NOT made on Track 0's branch — it belongs on the integration/feat/call-cnv branch (logged for integration).
+
+---
+
+# PHASE 1+2 ORCHESTRATION — 6 verifiable features → 2 ship agents (NOTHING PUSHED)
+
+## Oracle matrix (VERIFIED present before dispatch)
+- bcftools 1.16: `isec` ✓, `norm -m` ✓, `csq -f chr7.fa -g GFF` ✓ (protein HGVS). VEP absent → csq + genetic code are the HGVS oracle. Reference chr7.fa + testdata/EGFR_region.GRCh37.gff3 present.
+
+## Dependency graph + branch bases
+```
+HGVS/translation (FOUNDATION: codon-extraction ONCE) ── feat/hgvs off feat/annotate (spliceql c247dad)
+isec (VCF set ops) ── feat/isec off feat/vcf-input-and-test-data ──► PAIRED WITH ── feat/paired off feat/isec
+multi-allelic ── feat/multiallelic off feat/vcf-input-and-test-data        (independent)
+density-aware shards ── feat/density off wt/parallelism ──► WASM workers ── feat/wasm-threads off feat/density
+```
+- WAVE 1 (parallel, independent): HGVS, isec, multi-allelic, density-shards.
+- WAVE 2 (gated on wave-1 dep): PAIRED WITH (needs isec), WASM workers (needs density).
+
+## Per-feature oracle gate (non-negotiable, honesty rule)
+- HGVS: L858R chr7:55259515 T>G → p.Leu858Arg; differential vs `bcftools csq`. Genetic-code unit tests for translate()/codon_at()/gc(). **codon-extraction-from-reference is ONE module; translate/codon_at/gc/HGVS all consume it — no forking.**
+- isec: byte-identical vs `bcftools isec` (intersect/union/complement) on the ClinVar/GIAB slices.
+- PAIRED WITH: tumor/normal set logic == `bcftools isec` (somatic = tumor-only complement).
+- multi-allelic: split == `bcftools norm -m -`.
+- density-shards: byte-identical to serial (moving cuts can't change the answer) + speedup toward linear vs uniform split.
+- WASM workers: byte-identical in a real wasm-pack build + crossOriginIsolated detection w/ single-thread fallback.
+
+## Shared-enum coordination (orchestrator owns)
+Record enum already gains Cnv (T3) + AnnotatedVariant (T1). HGVS extends AnnotatedVariant's columns (no new variant — additive). isec/PAIRED/multi-allelic operate on Variant records (likely no new Record variant; if isec needs a set-membership record, flag it). Logged so Phase-2 integration resolves once.
+
+## Phase 2 GATE: dispatch ship agents ONLY after all 6 features + the 4 existing tracks are built+verified. Ship Agent A = integration (per docs/.../2026-06-28-integration-and-ship.md, extended for the 6 new features). Ship Agent B = release (two-submodule publish dance; STOP before actual publish for user approval).
+
+## Status
+| feature | branch | status |
+|---|---|---|
+| HGVS foundation | feat/hgvs | dispatching (wave 1) |
+| isec | feat/isec | dispatching (wave 1) |
+| multi-allelic | feat/multiallelic | dispatching (wave 1) |
+| density-shards | feat/density | dispatching (wave 1) |
+| PAIRED WITH | feat/paired | blocked on isec |
+| WASM workers | feat/wasm-threads | blocked on density |
