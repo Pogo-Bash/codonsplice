@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use cnvlens_core::model::{Region, Variant, VariantOptions};
 use cnvlens_core::variants::call_variants_region;
 use codonsplice_core::shard::{
-    shard_and_merge, split_region, NativeThreadExecutor, SerialExecutor, Shard,
+    shard_and_merge, split_region, split_region_bai, NativeThreadExecutor, SerialExecutor, Shard,
 };
 
 const CHROM: &str = "7";
@@ -122,6 +122,43 @@ fn native_sharded_is_byte_identical_to_serial() {
         let serial_sharded = to_ndjson(&sharded(&fx, &SerialExecutor, &shards));
         assert_eq!(serial_sharded, baseline, "serial-executor sharded must match too");
     }
+}
+
+/// The density-aware path proper: cuts placed from the REAL BAI linear index
+/// (`split_region_bai`), not a uniform grid. Two things must hold together —
+/// (1) the cuts are genuinely *non-uniform* (else the gate is vacuous / silently
+/// fell back to uniform), and (2) those uneven cuts still produce output
+/// byte-identical to serial. "Moving the cuts cannot change the answer."
+#[test]
+fn density_split_from_bai_is_byte_identical_to_serial() {
+    let fx = fixture();
+    let baseline = to_ndjson(&serial(&fx));
+
+    let mut saw_nonuniform = false;
+    for n in [2usize, 3, 4, 8, 16] {
+        let dshards = split_region_bai(CHROM, START, END, n, &fx.bam, &fx.bai);
+        // Did density actually shift the cuts off the uniform grid? (Targeted-
+        // capture coverage clusters around the EGFR exons, so it should.)
+        let dbounds: Vec<i64> = dshards.iter().map(|s| s.start).collect();
+        let ubounds: Vec<i64> = split_region(CHROM, START, END, n)
+            .iter()
+            .map(|s| s.start)
+            .collect();
+        if dbounds != ubounds {
+            saw_nonuniform = true;
+        }
+
+        let native = to_ndjson(&sharded(&fx, &NativeThreadExecutor, &dshards));
+        assert_eq!(
+            native, baseline,
+            "density-split ({n} shards, BAI-placed cuts) must be byte-identical to serial"
+        );
+    }
+    assert!(
+        saw_nonuniform,
+        "density split must move cuts off the uniform grid for the EGFR BAM — \
+         else this gate is vacuous (silent fallback to uniform)"
+    );
 }
 
 #[test]
