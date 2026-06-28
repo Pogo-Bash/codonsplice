@@ -28,7 +28,7 @@ fn write_vcf() -> std::path::PathBuf {
 
 #[test]
 fn stream_vcf_maps_columns() {
-    let vars: Vec<_> = vcf::stream_vcf(VCF.as_bytes(), None)
+    let vars: Vec<_> = vcf::stream_vcf(VCF.as_bytes(), None, false)
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(vars.len(), 3);
@@ -48,7 +48,7 @@ fn stream_vcf_maps_columns() {
 fn stream_vcf_region_filter() {
     // Restrict to chr7, 55.08–55.087 Mb: only the first record.
     let region = Region::with_bounds("7", Some(55_080_000), Some(55_087_000));
-    let vars: Vec<_> = vcf::stream_vcf(VCF.as_bytes(), Some(&region))
+    let vars: Vec<_> = vcf::stream_vcf(VCF.as_bytes(), Some(&region), false)
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(vars.len(), 1);

@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##contig=<ID=7,length=159138663>
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Depth">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Freq">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+7	55019021	rsA	C	A,G,T	60	PASS	DP=100;AF=0.3,0.2,0.1
+7	55019024	.	A	C,T	55	PASS	DP=90;AF=0.4,0.15
+7	55181380	rsB	G	A	40	PASS	DP=80;AF=0.5
+7	55249060	.	GC	G,GTC	70	PASS	DP=120;AF=0.25,0.35
