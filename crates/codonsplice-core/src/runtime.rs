@@ -225,6 +225,10 @@ pub struct Cursor {
     /// Template variable bindings, copied from the VM at `SCAN` so the
     /// per-record predicate/projection/order sub-programs can resolve `$vars`.
     pub vars: VarMap,
+    /// `ANNOTATE` databases, loaded by the `Annotate` opcode. When present,
+    /// materialization maps each `Variant` record through it to an
+    /// `AnnotatedVariant` *before* the predicate/projection run.
+    pub annotator: Option<Arc<crate::annotate::Annotator>>,
 }
 
 /// A deferred producer of records, invoked by materialization with the resolved
@@ -255,6 +259,7 @@ impl Cursor {
             records: None,
             producer: None,
             vars: VarMap::default(),
+            annotator: None,
         }
     }
 }
@@ -288,6 +293,16 @@ impl AlnRow {
 pub enum Record {
     Alignment(AlnRow),
     Variant(Variant),
+    /// A variant enriched by the `ANNOTATE` clause: the original variant plus an
+    /// ordered list of `(column, value)` annotation columns (gene/exon/clinvar/
+    /// …). Annotation columns are resolved by `get_field` before the variant's
+    /// own columns, and appended by `into_row`/serialization — so downstream
+    /// `WHERE`/`SELECT` and the output writers see them additively. See
+    /// [`crate::annotate`].
+    AnnotatedVariant {
+        variant: Variant,
+        annotations: Vec<(String, String)>,
+    },
     CoverageWindow(CoverageWindow),
     Header(Vec<(String, usize)>),
     /// A projected output row (from `SELECT col, ...`): an ordered list of
@@ -300,6 +315,7 @@ impl Record {
         match self {
             Record::Alignment(_) => "alignment",
             Record::Variant(_) => "variant",
+            Record::AnnotatedVariant { .. } => "annotated_variant",
             Record::CoverageWindow(_) => "coverage_window",
             Record::Header(_) => "header",
             Record::Row(_) => "row",
@@ -321,6 +337,26 @@ impl Record {
                 ("depth".into(), RuntimeValue::Int(v.depth)),
                 ("allele_freq".into(), RuntimeValue::Float(v.allele_freq)),
             ]),
+            // An annotated variant flattens to its variant columns followed by
+            // the annotation columns, so `SELECT *` / JSON / TSV show them.
+            Record::AnnotatedVariant {
+                ref variant,
+                ref annotations,
+            } => {
+                let mut cols = vec![
+                    ("chrom".to_string(), RuntimeValue::Str(Arc::from(variant.chrom.as_str()))),
+                    ("pos".to_string(), RuntimeValue::Int(variant.pos)),
+                    ("ref".to_string(), RuntimeValue::Str(Arc::from(variant.ref_base.as_str()))),
+                    ("alt".to_string(), RuntimeValue::Str(Arc::from(variant.alt.as_str()))),
+                    ("qual".to_string(), RuntimeValue::Float(variant.qual)),
+                    ("depth".to_string(), RuntimeValue::Int(variant.depth)),
+                    ("allele_freq".to_string(), RuntimeValue::Float(variant.allele_freq)),
+                ];
+                for (k, v) in annotations {
+                    cols.push((k.clone(), RuntimeValue::Str(Arc::from(v.as_str()))));
+                }
+                Record::Row(cols)
+            }
             Record::CoverageWindow(ref w) => Record::Row(vec![
                 ("chrom".into(), self.get_field("chrom")),
                 ("start".into(), RuntimeValue::Int(w.start)),
@@ -350,6 +386,15 @@ impl Record {
         match self {
             Record::Alignment(r) => aln_field(r, name),
             Record::Variant(v) => variant_field(v, name),
+            // Annotation columns shadow nothing (they are new names); resolve
+            // them first, then fall back to the inner variant's own columns.
+            Record::AnnotatedVariant {
+                variant,
+                annotations,
+            } => match annotations.iter().find(|(k, _)| k == name) {
+                Some((_, v)) => RuntimeValue::Str(Arc::from(v.as_str())),
+                None => variant_field(variant, name),
+            },
             Record::CoverageWindow(w) => window_field(w, name),
             Record::Header(_) => RuntimeValue::Null,
             Record::Row(cols) => cols

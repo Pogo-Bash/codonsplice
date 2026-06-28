@@ -23,12 +23,14 @@
 //! assert!(asm.contains("CALL_VARIANTS"));
 //! ```
 
+pub mod annotate;
 pub mod bytecode;
 pub mod compiler;
 pub mod materialize;
 pub mod runtime;
 pub mod vm;
 
+pub use annotate::{Annotator, ANNOTATION_FIELDS};
 pub use compiler::{
     did_you_mean, disassemble, extract_region, is_builtin, levenshtein, param_names_for,
     suggest_function, suggest_param, CompileError, Compiler, DebugInfo, OpCode, Program, Value,

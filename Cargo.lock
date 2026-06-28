@@ -276,6 +276,7 @@ name = "codonsplice-core"
 version = "0.1.6"
 dependencies = [
  "cnvlens-core",
+ "flate2",
  "serde_json",
  "spliceql",
 ]

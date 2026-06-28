@@ -74,6 +74,7 @@ pub enum OpCode {
     SetParam,  // u16 key_idx
     OrderBy,   // u16 table_off
     Limit,
+    Annotate,  // builds the ANNOTATE annotator from reserved SET_PARAM paths
     WriteInto, // u8 format, u16 path_idx
     Halt,
 
@@ -124,6 +125,7 @@ impl OpCode {
             OrderBy => 0x45,
             Limit => 0x46,
             WriteInto => 0x47,
+            Annotate => 0x48,
             Halt => 0x4F,
             CallVariants => 0x50,
             CallCnv => 0x51,
@@ -171,6 +173,7 @@ impl OpCode {
             0x45 => OrderBy,
             0x46 => Limit,
             0x47 => WriteInto,
+            0x48 => Annotate,
             0x4F => Halt,
             0x50 => CallVariants,
             0x51 => CallCnv,
@@ -234,6 +237,7 @@ impl OpCode {
             Filter => "FILTER",
             Project => "PROJECT",
             SetParam => "SET_PARAM",
+            Annotate => "ANNOTATE",
             OrderBy => "ORDER_BY",
             Limit => "LIMIT",
             WriteInto => "WRITE_INTO",
@@ -416,6 +420,11 @@ pub enum CompileError {
         clause: &'static str,
         span: Span,
     },
+    /// An `ANNOTATE WITH` key that names no known annotation database.
+    UnknownAnnotateKey {
+        key: String,
+        span: Span,
+    },
     ParseError(ParseError),
 }
 
@@ -439,6 +448,7 @@ impl CompileError {
             CompileError::FunctionArgType { .. } => "E008",
             CompileError::UnknownField { .. } => "E009",
             CompileError::MaterializeOnHeader { .. } => "E010",
+            CompileError::UnknownAnnotateKey { .. } => "E011",
             CompileError::ParseError(_) => "E000",
         }
     }
@@ -455,7 +465,8 @@ impl CompileError {
             | CompileError::FunctionArity { span, .. }
             | CompileError::FunctionArgType { span, .. }
             | CompileError::UnknownField { span, .. }
-            | CompileError::MaterializeOnHeader { span, .. } => *span,
+            | CompileError::MaterializeOnHeader { span, .. }
+            | CompileError::UnknownAnnotateKey { span, .. } => *span,
             CompileError::ParseError(e) => e.span(),
         }
     }
@@ -500,6 +511,9 @@ impl CompileError {
             } => format!("function {name:?} argument {arg} must be a {expected}, got {got}"),
             CompileError::MaterializeOnHeader { clause, .. } => format!(
                 "{clause} is not supported on CALL header — it yields a single record, not a row stream"
+            ),
+            CompileError::UnknownAnnotateKey { key, .. } => format!(
+                "unknown ANNOTATE database {key:?} — valid keys: genes, clinvar"
             ),
             CompileError::ParseError(e) => e.to_string(),
         }
@@ -917,9 +931,15 @@ fn validate_where_fields(query: &Query) -> Result<(), CompileError> {
         Some(k) => k,
         None => return Ok(()),
     };
+    // When ANNOTATE is present, its annotation columns become valid WHERE
+    // fields (gene/exon/clinvar_significance/…) on top of the record's own.
+    let annotated = query.annotate.is_some();
     let mut refs = Vec::new();
     collect_field_refs(filter, &mut refs);
     for (name, span) in refs {
+        if annotated && crate::annotate::ANNOTATION_FIELDS.contains(&name) {
+            continue;
+        }
         if !valid.contains(&name) {
             return Err(CompileError::UnknownField {
                 name: name.to_string(),
@@ -1008,6 +1028,13 @@ impl Compiler {
                 return Err(CompileError::ParamWithoutCall { span });
             }
             (None, None) => {}
+        }
+
+        // 3b. ANNOTATE → SET_PARAM(reserved paths) + ANNOTATE opcode. Runs after
+        //     the CALL so the cursor exists; the opcode only *builds* the
+        //     annotator (materialization applies it to the produced records).
+        if let Some(annotate) = &query.annotate {
+            self.compile_annotate(annotate)?;
         }
 
         // 4. SELECT → PROJECT (table appended after HALT)
@@ -1171,6 +1198,48 @@ impl Compiler {
             self.emit(OpCode::SetParam, span);
             self.emit_u16(kidx);
         }
+        Ok(())
+    }
+
+    /// Lower `ANNOTATE WITH genes="...", clinvar="..."`. Each database path is
+    /// pushed (LOAD_CONST string or LOAD_VAR `$path`) and stashed via SET_PARAM
+    /// under a reserved key (`__annotate_genes` / `__annotate_clinvar`); the
+    /// `ANNOTATE` opcode then reads those reserved params, loads the files via
+    /// `Io`, and builds the annotator. Unknown keys are rejected.
+    fn compile_annotate(&mut self, annotate: &AnnotateClause) -> Result<(), CompileError> {
+        for (key, value_expr) in &annotate.params {
+            let span = value_expr.span();
+            let reserved = match key.as_str() {
+                "genes" => "__annotate_genes",
+                "clinvar" => "__annotate_clinvar",
+                _ => {
+                    return Err(CompileError::UnknownAnnotateKey {
+                        key: key.clone(),
+                        span,
+                    })
+                }
+            };
+            // Push the path: a `$var` defers to runtime resolution, otherwise the
+            // value must be a string-literal path.
+            if let Expr::Var(name, _) = value_expr {
+                let nidx = self.intern(Value::Str(Rc::from(name.as_str())));
+                self.emit(OpCode::LoadVar, span);
+                self.emit_u16(nidx);
+            } else {
+                match const_eval(value_expr) {
+                    Some(v @ Value::Str(_)) => {
+                        let vidx = self.intern(v);
+                        self.emit(OpCode::LoadConst, span);
+                        self.emit_u16(vidx);
+                    }
+                    _ => return Err(CompileError::NonConstantParam { span }),
+                }
+            }
+            let kidx = self.intern(Value::Str(Rc::from(reserved)));
+            self.emit(OpCode::SetParam, span);
+            self.emit_u16(kidx);
+        }
+        self.emit(OpCode::Annotate, annotate.span);
         Ok(())
     }
 

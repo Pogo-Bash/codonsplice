@@ -259,6 +259,7 @@ impl Vm {
                 OpCode::Filter => self.op_filter()?,
                 OpCode::Project => self.op_project()?,
                 OpCode::SetParam => self.op_set_param()?,
+                OpCode::Annotate => self.op_annotate()?,
                 OpCode::OrderBy => self.op_order_by()?,
                 OpCode::Limit => self.op_limit()?,
                 OpCode::WriteInto => self.op_write_into()?,
@@ -318,6 +319,7 @@ impl Vm {
                 | OpCode::Filter
                 | OpCode::Project
                 | OpCode::SetParam
+                | OpCode::Annotate
                 | OpCode::OrderBy
                 | OpCode::Limit
                 | OpCode::WriteInto
@@ -473,6 +475,54 @@ impl Vm {
         let key = self.const_str(key_idx);
         let value = self.pop(pc0)?;
         self.pending_params.push((key, value));
+        Ok(())
+    }
+
+    /// Build the `ANNOTATE` annotator from the reserved database paths stashed in
+    /// `pending_params` (`__annotate_genes` / `__annotate_clinvar`), reading each
+    /// file through `Io`, and store it on the cursor. Materialization applies it
+    /// per record. All reads are local — no network (the offline/WASM thesis).
+    fn op_annotate(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+
+        let path_for = |vm: &Self, k: &str| -> Option<String> {
+            vm.pending_params.iter().find_map(|(key, v)| {
+                if key.as_ref() == k {
+                    match v {
+                        RuntimeValue::Str(s) => Some(s.to_string()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+        };
+        let genes_path = path_for(self, "__annotate_genes");
+        let clinvar_path = path_for(self, "__annotate_clinvar");
+
+        let read = |vm: &Self, p: &Option<String>| -> Result<Option<Vec<u8>>, VmError> {
+            match p {
+                Some(path) => {
+                    let bytes = vm.io.read_file(path).map_err(|e| {
+                        VmError::Io(format!("annotate database {path:?}: {e}"))
+                    })?;
+                    Ok(Some(bytes))
+                }
+                None => Ok(None),
+            }
+        };
+        let genes = read(self, &genes_path)?;
+        let clinvar = read(self, &clinvar_path)?;
+
+        let annotator = crate::annotate::Annotator::from_sources(
+            genes.as_deref(),
+            clinvar.as_deref(),
+        )
+        .map_err(VmError::core)?;
+
+        let cursor = self.peek_cursor(pc0)?;
+        cursor.lock().unwrap().annotator = Some(Arc::new(annotator));
         Ok(())
     }
 
@@ -1255,6 +1305,17 @@ pub fn record_to_json(r: &Record) -> serde_json::Value {
     use serde_json::json;
     match r {
         Record::Variant(v) => serde_json::to_value(v).unwrap_or(json!({})),
+        // An annotated variant serializes as its variant object with the
+        // annotation columns merged in (`SELECT *` / `INTO json`).
+        Record::AnnotatedVariant { variant, annotations } => {
+            let mut val = serde_json::to_value(variant).unwrap_or(json!({}));
+            if let serde_json::Value::Object(map) = &mut val {
+                for (k, v) in annotations {
+                    map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                }
+            }
+            val
+        }
         Record::CoverageWindow(w) => serde_json::to_value(w).unwrap_or(json!({})),
         Record::Alignment(a) => json!({
             "chrom": a.chrom,

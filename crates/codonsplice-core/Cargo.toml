@@ -19,6 +19,10 @@ cnvlens-core = { path = "../../cnvlens/rust/cnvlens-core", version = "0.1.1" }
 # preserve_order keeps JSON/TSV columns in record/projection order (a Variant's
 # struct-field order, or the SELECT column order) instead of sorting them.
 serde_json = { version = "1", features = ["preserve_order"] }
+# ANNOTATE reads local GFF (plain) and ClinVar (BGZF) annotation databases.
+# flate2's MultiGzDecoder transparently inflates BGZF (a series of concatenated
+# gzip blocks) for whole-file decode — no noodles/bgzf dependency needed here.
+flate2 = "1"
 
 [dev-dependencies]
 # Integration tests compare the VM against direct cnvlens-core calls and parse
