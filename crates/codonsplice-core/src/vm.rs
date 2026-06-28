@@ -514,10 +514,16 @@ impl Vm {
         };
         let genes = read(self, &genes_path)?;
         let clinvar = read(self, &clinvar_path)?;
+        // The `WITH reference = "ref.fa"` FASTA (if any) lets the annotator emit
+        // HGVS protein/cDNA (`aa_change`/`hgvs_c`); without it those columns are
+        // ".". Same reserved param the variant caller reads for REF bases.
+        let reference_path = path_for(self, "reference");
+        let reference = read(self, &reference_path)?;
 
         let annotator = crate::annotate::Annotator::from_sources(
             genes.as_deref(),
             clinvar.as_deref(),
+            reference.as_deref(),
         )
         .map_err(VmError::core)?;
 
@@ -1709,72 +1715,10 @@ fn display_value(v: &RuntimeValue) -> String {
     }
 }
 
-/// Fraction of G/C among A/C/G/T bases (other symbols ignored); 0.0 if none.
-fn gc_fraction(seq: &str) -> f64 {
-    let (mut gc, mut at) = (0u64, 0u64);
-    for b in seq.bytes() {
-        match b.to_ascii_uppercase() {
-            b'G' | b'C' => gc += 1,
-            b'A' | b'T' => at += 1,
-            _ => {}
-        }
-    }
-    let denom = gc + at;
-    if denom == 0 {
-        0.0
-    } else {
-        gc as f64 / denom as f64
-    }
-}
-
-/// Reverse complement of a DNA string (uppercased; N and unknowns pass through).
-fn revcomp(seq: &str) -> String {
-    seq.chars()
-        .rev()
-        .map(|c| match c.to_ascii_uppercase() {
-            'A' => 'T',
-            'T' | 'U' => 'A',
-            'C' => 'G',
-            'G' => 'C',
-            other => other,
-        })
-        .collect()
-}
-
-/// Map a base to its index in T,C,A,G order (the layout of the codon table).
-fn base_idx(b: u8) -> Option<usize> {
-    match b.to_ascii_uppercase() {
-        b'T' | b'U' => Some(0),
-        b'C' => Some(1),
-        b'A' => Some(2),
-        b'G' => Some(3),
-        _ => None,
-    }
-}
-
-/// Single-letter amino acid for a DNA codon (NCBI table 1). `*` = stop, `X` =
-/// codon containing a non-ACGT base.
-fn codon_aa(c: &[u8]) -> char {
-    // Amino acids indexed by base1*16 + base2*4 + base3, each base in T,C,A,G order.
-    const AAS: &[u8] = b"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG";
-    match (base_idx(c[0]), base_idx(c[1]), base_idx(c[2])) {
-        (Some(a), Some(b), Some(d)) => AAS[a * 16 + b * 4 + d] as char,
-        _ => 'X',
-    }
-}
-
-/// Translate DNA to a single-letter amino-acid string from `frame` (0/1/2); a
-/// trailing partial codon is dropped.
-fn translate_dna(seq: &str, frame: usize) -> String {
-    let bases: Vec<u8> = seq.bytes().collect();
-    let mut aa = String::new();
-    let mut i = frame;
-    while i + 3 <= bases.len() {
-        aa.push(codon_aa(&bases[i..i + 3]));
-        i += 3;
-    }
-    aa
-}
+// The genetic code, translation, GC fraction and reverse-complement all live in
+// the single shared `crate::codon` module; the genomic builtins below delegate
+// to it so there is exactly one codon implementation across the engine.
+use crate::codon;
 
 /// Dispatch a builtin by name. `args` are in call order; `_pc` is kept for
 /// parity with the other VM helpers and future span-aware errors.
@@ -1941,31 +1885,30 @@ fn call_builtin(name: &str, args: &[RuntimeValue], _pc: usize) -> Result<Runtime
         // ── genomic ──────────────────────────────────────────────────────
         "gc" => {
             arity(1)?;
-            Ok(Float(gc_fraction(&text(0)?)))
+            Ok(Float(codon::gc(&text(0)?)))
         }
         "revcomp" => {
             arity(1)?;
-            Ok(Str(std::sync::Arc::from(revcomp(&text(0)?))))
+            Ok(Str(std::sync::Arc::from(codon::revcomp(&text(0)?))))
         }
         "translate" => match args.len() {
-            1 => Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, 0)))),
+            1 => Ok(Str(std::sync::Arc::from(codon::translate(&text(0)?, 0)))),
             2 => {
                 let frame = as_i64(&args[1]).unwrap_or(0).max(0) as usize;
-                Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, frame))))
+                Ok(Str(std::sync::Arc::from(codon::translate(&text(0)?, frame))))
             }
             n => Err(bad(format!("translate() takes 1 or 2 arguments, got {n}"))),
         },
         "codon_at" => {
             arity(2)?;
-            let chars: Vec<char> = text(0)?.chars().collect();
             let i = as_i64(&args[1]).unwrap_or(-1);
-            if i < 0 || (i as usize) + 3 > chars.len() {
+            if i < 0 {
                 Ok(Null)
             } else {
-                let i = i as usize;
-                Ok(Str(std::sync::Arc::from(
-                    chars[i..i + 3].iter().collect::<String>(),
-                )))
+                match codon::codon_at_index(&text(0)?, i as usize) {
+                    Some(c) => Ok(Str(std::sync::Arc::from(c))),
+                    None => Ok(Null),
+                }
             }
         }
         _ => Err(bad(format!("unknown function {name}()"))),

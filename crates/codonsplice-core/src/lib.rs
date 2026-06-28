@@ -25,6 +25,7 @@
 
 pub mod annotate;
 pub mod bytecode;
+pub mod codon;
 pub mod compiler;
 pub mod materialize;
 pub mod runtime;

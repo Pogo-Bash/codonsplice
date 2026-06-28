@@ -67,7 +67,7 @@ fn col<'a>(ann: &'a [(String, String)], key: &str) -> &'a str {
 
 #[test]
 fn l858r_annotates_gene_exon_and_clinical() {
-    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()))
+    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()), None)
         .expect("build annotator");
     // chr7:55259515 T>G (GRCh37) — EGFR L858R, somatic/oncogenic.
     let cols = ann.annotate(&variant("7", 55259515, "T", "G"));
@@ -80,9 +80,31 @@ fn l858r_annotates_gene_exon_and_clinical() {
     assert_eq!(col(&cols, "consequence"), "missense_variant");
 }
 
+/// A minimal reference covering just the L858 codon (genomic 55259514..516 =
+/// CTG on the + strand), using a `samtools faidx` style region-slice header so
+/// the absolute coordinates stay correct without shipping the whole contig.
+fn l858_ref_bytes() -> Vec<u8> {
+    b">7:55259514-55259516\nCTG\n".to_vec()
+}
+
+#[test]
+fn l858r_emits_hgvs_protein_and_cdna() {
+    let ann = Annotator::from_sources(
+        Some(&gff_bytes()),
+        Some(&clinvar_bytes()),
+        Some(&l858_ref_bytes()),
+    )
+    .expect("build annotator");
+    // EGFR L858R: chr7:55259515 T>G (GRCh37), exon 21, + strand.
+    // Reference codon CTG (Leu858) → CGG (Arg858).
+    let cols = ann.annotate(&variant("7", 55259515, "T", "G"));
+    assert_eq!(col(&cols, "aa_change"), "p.Leu858Arg");
+    assert_eq!(col(&cols, "hgvs_c"), "c.2573T>G");
+}
+
 #[test]
 fn intronic_egfr_variant_gets_gene_but_no_exon() {
-    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()))
+    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()), None)
         .expect("build annotator");
     let cols = ann.annotate(&variant("7", 55230000, "C", "T"));
     assert_eq!(col(&cols, "gene"), "EGFR");
@@ -92,7 +114,7 @@ fn intronic_egfr_variant_gets_gene_but_no_exon() {
 
 #[test]
 fn unmatched_clinvar_yields_dot_significance() {
-    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()))
+    let ann = Annotator::from_sources(Some(&gff_bytes()), Some(&clinvar_bytes()), None)
         .expect("build annotator");
     // Right position, wrong ALT — must not match L858R's clinvar record.
     let cols = ann.annotate(&variant("7", 55259515, "T", "A"));

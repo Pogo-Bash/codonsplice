@@ -24,6 +24,8 @@ use std::io::Read;
 use cnvlens_core::error::CoreError;
 use cnvlens_core::model::Variant;
 
+use crate::codon::{self, CdsModel, CdsSegment, Strand};
+
 /// The ordered annotation column names every annotated record carries. A column
 /// with no join hit is filled with `"."` (not absent), so predicates like
 /// `WHERE clinvar_significance != "."` behave predictably.
@@ -34,6 +36,8 @@ pub const ANNOTATION_FIELDS: &[&str] = &[
     "exon_id",
     "region",
     "consequence",
+    "aa_change",
+    "hgvs_c",
     "clinvar_significance",
     "clinvar_oncogenic",
     "clinvar_id",
@@ -51,6 +55,26 @@ pub struct Annotator {
     exons: Vec<Exon>,
     /// (chrom, pos, ref, alt) → ClinVar fields.
     clinvar: HashMap<(String, i64, String, String), ClinRecord>,
+    /// transcript id → coding model, built from CDS features (for HGVS/protein).
+    cds: HashMap<String, CdsModel>,
+    /// transcript id → contig, so the codon extractor knows which reference
+    /// sequence to read.
+    cds_contig: HashMap<String, String>,
+    /// contig → reference sequence indexed by absolute 0-based genomic position
+    /// (base at 1-based `pos` is byte `pos-1`). Empty if no reference given.
+    reference: HashMap<String, String>,
+}
+
+/// A raw CDS feature, accumulated during GFF parse and later assembled into a
+/// per-transcript [`CdsModel`].
+#[derive(Debug)]
+struct RawCds {
+    transcript: String,
+    chrom: String,
+    start: i64,
+    end: i64,
+    phase: u8,
+    strand: Strand,
 }
 
 #[derive(Debug)]
@@ -90,18 +114,47 @@ impl Annotator {
     /// Build an annotator from the raw bytes of a GFF3 gene model and/or a
     /// ClinVar VCF (plain text or BGZF — transparently inflated). Either source
     /// may be `None`; the corresponding columns then resolve to `"."`.
-    pub fn from_sources(genes: Option<&[u8]>, clinvar: Option<&[u8]>) -> Result<Self, CoreError> {
+    pub fn from_sources(
+        genes: Option<&[u8]>,
+        clinvar: Option<&[u8]>,
+        reference: Option<&[u8]>,
+    ) -> Result<Self, CoreError> {
         let mut a = Annotator::default();
         if let Some(bytes) = genes {
-            a.load_gff(&decode_text(bytes)?);
+            let mut raw_cds: Vec<RawCds> = Vec::new();
+            a.load_gff(&decode_text(bytes)?, &mut raw_cds);
+            a.build_cds_models(raw_cds);
         }
         if let Some(bytes) = clinvar {
             a.load_clinvar(&decode_text(bytes)?);
         }
+        if let Some(bytes) = reference {
+            // Reference FASTA is plain text or BGZF; reuse the same decoder.
+            a.reference = parse_fasta_abs(&decode_text(bytes)?);
+        }
         Ok(a)
     }
 
-    fn load_gff(&mut self, text: &str) {
+    /// Assemble accumulated CDS features into one [`CdsModel`] per transcript.
+    fn build_cds_models(&mut self, raw: Vec<RawCds>) {
+        let mut by_tx: HashMap<String, (String, Strand, Vec<CdsSegment>)> = HashMap::new();
+        for c in raw {
+            let entry = by_tx
+                .entry(c.transcript.clone())
+                .or_insert_with(|| (c.chrom.clone(), c.strand, Vec::new()));
+            entry.2.push(CdsSegment {
+                start: c.start,
+                end: c.end,
+                phase: c.phase,
+            });
+        }
+        for (tx, (chrom, strand, segs)) in by_tx {
+            self.cds_contig.insert(tx.clone(), chrom);
+            self.cds.insert(tx, CdsModel::new(strand, segs));
+        }
+    }
+
+    fn load_gff(&mut self, text: &str, raw_cds: &mut Vec<RawCds>) {
         for line in text.lines() {
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -153,6 +206,30 @@ impl Annotator {
                         transcript,
                         rank: gff_attr(attrs, "rank").unwrap_or_else(|| NA.to_string()),
                         exon_id: gff_attr(attrs, "exon_id").unwrap_or_else(|| NA.to_string()),
+                    });
+                }
+                // CDS features carry the strand (col 7) and phase (col 8) needed
+                // to build the coding model for HGVS/protein annotation. The
+                // bcftools-csq-compatible GFF supplies a phase per segment.
+                "CDS" => {
+                    let transcript = gff_attr(attrs, "Parent")
+                        .map(strip_prefix_colon)
+                        .unwrap_or_default();
+                    if transcript.is_empty() {
+                        continue;
+                    }
+                    let strand = match c[6] {
+                        "-" => Strand::Minus,
+                        _ => Strand::Plus,
+                    };
+                    let phase = c[7].parse::<u8>().unwrap_or(0);
+                    raw_cds.push(RawCds {
+                        transcript,
+                        chrom: chrom.to_string(),
+                        start,
+                        end,
+                        phase,
+                        strand,
                     });
                 }
                 _ => {}
@@ -253,6 +330,11 @@ impl Annotator {
             }
         };
 
+        // HGVS coding (`c.`) and protein (`p.`) change, computed from the chosen
+        // transcript's CDS model + reference. `(".", ".")` when the variant is
+        // non-coding, not an SNV, or no reference/CDS is available.
+        let (aa_change, hgvs_c) = self.coding_change(&transcript, v);
+
         let key = (v.chrom.clone(), v.pos, v.ref_base.clone(), v.alt.clone());
         let clin = self.clinvar.get(&key);
         let sig = clin.map(|c| c.significance.clone());
@@ -269,6 +351,8 @@ impl Annotator {
                 clin.map(|c| c.consequence.clone())
                     .unwrap_or_else(|| NA.to_string()),
             ),
+            ("aa_change".to_string(), aa_change),
+            ("hgvs_c".to_string(), hgvs_c),
             (
                 "clinvar_significance".to_string(),
                 sig.unwrap_or_else(|| NA.to_string()),
@@ -291,6 +375,83 @@ impl Annotator {
         cols
     }
 
+    /// Compute the HGVS protein (`p.`) and coding (`c.`) change for SNV `v` on
+    /// `transcript`. Returns `(".", ".")` if the transcript has no CDS model, no
+    /// reference is loaded, the variant is not a single-base substitution, or the
+    /// position is not inside the CDS.
+    fn coding_change(&self, transcript: &str, v: &Variant) -> (String, String) {
+        let na = || (NA.to_string(), NA.to_string());
+        // SNV only: single ref and alt base.
+        if v.ref_base.len() != 1 || v.alt.len() != 1 {
+            return na();
+        }
+        let cds = match self.cds.get(transcript) {
+            Some(c) => c,
+            None => return na(),
+        };
+        let contig = match self.cds_contig.get(transcript) {
+            Some(c) => c,
+            None => return na(),
+        };
+        let seq = match self.reference.get(contig) {
+            Some(s) => s.as_bytes(),
+            None => return na(),
+        };
+        // Reference base at 1-based genomic position (None if out of range).
+        let ref_at = |p: i64| -> Option<u8> {
+            if p < 1 {
+                return None;
+            }
+            seq.get((p - 1) as usize).copied()
+        };
+        let hit = match codon::codon_at_genomic(cds, v.pos, ref_at) {
+            Some(h) => h,
+            None => return na(),
+        };
+
+        // Orient the variant bases onto the coding strand.
+        let ref_base = v.ref_base.bytes().next().unwrap().to_ascii_uppercase();
+        let alt_base = v.alt.bytes().next().unwrap().to_ascii_uppercase();
+        let (coding_ref, coding_alt) = match cds.strand {
+            Strand::Plus => (ref_base, alt_base),
+            Strand::Minus => (complement(ref_base), complement(alt_base)),
+        };
+
+        // Build the mutant codon by substituting the variant base at `frame`.
+        let ref_codon = hit.codon.as_bytes().to_vec();
+        if hit.frame >= 3 {
+            return na();
+        }
+        // Sanity: the reference codon base at `frame` should equal the variant's
+        // (coding-strand) REF base; if not, the inputs disagree — bail to "."
+        // rather than emit a misleading call.
+        if ref_codon[hit.frame] != coding_ref {
+            return na();
+        }
+        let mut mut_codon = ref_codon.clone();
+        mut_codon[hit.frame] = coding_alt;
+
+        let ref_aa = codon::codon_to_aa(&ref_codon);
+        let mut_aa = codon::codon_to_aa(&mut_codon);
+        let aa_num = hit.codon_index + 1;
+        let aa_change = if ref_aa == mut_aa {
+            // Synonymous: HGVS `p.(=)` style with the residue spelled out.
+            format!("p.{}{}=", codon::aa1_to_aa3(ref_aa), aa_num)
+        } else {
+            format!(
+                "p.{}{}{}",
+                codon::aa1_to_aa3(ref_aa),
+                aa_num,
+                codon::aa1_to_aa3(mut_aa)
+            )
+        };
+        let hgvs_c = format!(
+            "c.{}{}>{}",
+            hit.cds_pos, coding_ref as char, coding_alt as char
+        );
+        (aa_change, hgvs_c)
+    }
+
     /// Is exon `a`'s transcript a better representative than `b`'s?
     /// CCDS first, then longest span, then smaller transcript id.
     fn exon_better(&self, a: &Exon, b: &Exon) -> bool {
@@ -308,6 +469,75 @@ impl Annotator {
             },
         }
     }
+}
+
+/// Complement a single uppercase DNA base (N/unknown pass through).
+fn complement(b: u8) -> u8 {
+    match b {
+        b'A' => b'T',
+        b'T' | b'U' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        other => other,
+    }
+}
+
+/// Parse a FASTA text into `contig -> sequence`, where each sequence is indexed
+/// by **absolute 0-based** genomic position (base at 1-based `pos` is byte
+/// `pos-1`). A `samtools faidx`-style `contig:start-end` region header is
+/// left-padded with `N` up to `start-1` so a small slice stays coordinate
+/// correct. Mirrors `crate::vm::parse_fasta` (the engine's reference loader) so
+/// the annotator and the VM agree on coordinates.
+fn parse_fasta_abs(text: &str) -> HashMap<String, String> {
+    let mut seqs: HashMap<String, String> = HashMap::new();
+    let mut name = String::new();
+    let mut offset: usize = 0;
+    let mut seq = String::new();
+    let flush = |seqs: &mut HashMap<String, String>, name: &mut String, offset: usize, seq: &mut String| {
+        if name.is_empty() {
+            return;
+        }
+        let body = std::mem::take(seq);
+        let mut full = String::with_capacity(offset + body.len());
+        full.extend(std::iter::repeat('N').take(offset));
+        full.push_str(&body);
+        seqs.insert(std::mem::take(name), full);
+    };
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('>') {
+            flush(&mut seqs, &mut name, offset, &mut seq);
+            let token = rest.split_whitespace().next().unwrap_or("");
+            let (contig, off) = fasta_header_offset(token);
+            name = contig;
+            offset = off;
+        } else {
+            seq.push_str(line.trim());
+        }
+    }
+    flush(&mut seqs, &mut name, offset, &mut seq);
+    seqs
+}
+
+/// Split a FASTA header token into `(contig, offset)`, where a `contig:start-end`
+/// region slice yields `offset = start - 1` (0-based) and a plain name yields 0.
+fn fasta_header_offset(token: &str) -> (String, usize) {
+    if let Some((contig, range)) = token.rsplit_once(':') {
+        if let Some((start, end)) = range.split_once('-') {
+            let start = start.replace(',', "");
+            let end = end.replace(',', "");
+            if !start.is_empty()
+                && start.chars().all(|c| c.is_ascii_digit())
+                && end.chars().all(|c| c.is_ascii_digit())
+            {
+                if let Ok(s) = start.parse::<usize>() {
+                    if s >= 1 {
+                        return (contig.to_string(), s - 1);
+                    }
+                }
+            }
+        }
+    }
+    (token.to_string(), 0)
 }
 
 /// Decode a database buffer to text, transparently inflating BGZF/gzip. BGZF is
