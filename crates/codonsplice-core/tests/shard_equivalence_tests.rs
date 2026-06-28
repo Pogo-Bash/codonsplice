@@ -1,0 +1,168 @@
+//! Track 2 — region-sharded parallelism: serial-equivalence gate.
+//!
+//! The non-negotiable contract: a `CALL variants` query run **sharded** across
+//! threads must be **byte-identical** to the same query run **serially**. These
+//! tests prove it over the real EGFR sample BAM, and hammer the shard-boundary
+//! interaction (#20 danger zone): a variant landing exactly on a shard boundary
+//! must appear exactly once — not dropped, not duplicated.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use cnvlens_core::model::{Region, Variant, VariantOptions};
+use cnvlens_core::variants::call_variants_region;
+use codonsplice_core::shard::{
+    shard_and_merge, split_region, NativeThreadExecutor, SerialExecutor, Shard,
+};
+
+const CHROM: &str = "7";
+// The whole EGFR window the sample BAM/reference cover.
+const START: i64 = 54_990_000;
+const END: i64 = 55_300_100;
+// A known het variant in the sample (depth 340) — our boundary target.
+const BOUNDARY_VAR: i64 = 55_220_177;
+
+fn data_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../cnvlens/public/sample-data")
+        .join(name)
+}
+
+fn parse_fasta(bytes: &[u8]) -> HashMap<String, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut map = HashMap::new();
+    let mut name = String::new();
+    let mut seq = String::new();
+    for line in text.lines() {
+        if let Some(h) = line.strip_prefix('>') {
+            if !name.is_empty() {
+                map.insert(std::mem::take(&mut name), std::mem::take(&mut seq));
+            }
+            name = h.split_whitespace().next().unwrap_or("").to_string();
+        } else {
+            seq.push_str(line.trim());
+        }
+    }
+    if !name.is_empty() {
+        map.insert(name, seq);
+    }
+    map
+}
+
+struct Fixture {
+    bam: Vec<u8>,
+    bai: Vec<u8>,
+    opts: VariantOptions,
+}
+
+fn fixture() -> Fixture {
+    let bam = std::fs::read(data_path("NA12878_EGFR.bam")).unwrap();
+    let bai = std::fs::read(data_path("NA12878_EGFR.bam.bai")).unwrap();
+    let reference = std::fs::read(data_path("EGFR_region.fa")).unwrap();
+    let mut opts = VariantOptions::default();
+    opts.reference_seqs = Some(parse_fasta(&reference));
+    Fixture { bam, bai, opts }
+}
+
+/// Serialize a variant list to newline-delimited JSON — exactly the byte stream
+/// the CLI/`record_to_json` would emit, so "byte-identical" means byte-identical.
+fn to_ndjson(vars: &[Variant]) -> String {
+    let mut s = String::new();
+    for v in vars {
+        s.push_str(&serde_json::to_string(v).unwrap());
+        s.push('\n');
+    }
+    s
+}
+
+/// Serial baseline: one pileup over the whole region, clamped to `[START, END]`
+/// (the same clamp the query's `WHERE pos` predicate applies).
+fn serial(fx: &Fixture) -> Vec<Variant> {
+    let region = Region::with_bounds(CHROM, Some(START), Some(END));
+    let mut vars = call_variants_region(&fx.bam, &fx.bai, &region, &fx.opts).unwrap();
+    vars.retain(|v| v.pos >= START && v.pos <= END);
+    vars
+}
+
+/// Sharded run: split into shards, call per shard, merge with the boundary-correct
+/// clamp. `exec` lets us run the SAME brain serially or natively-threaded.
+fn sharded<E: codonsplice_core::shard::ShardExecutor>(
+    fx: &Fixture,
+    exec: &E,
+    shards: &[Shard],
+) -> Vec<Variant> {
+    shard_and_merge(
+        exec,
+        shards,
+        |s: &Shard| call_variants_region(&fx.bam, &fx.bai, &s.to_core_region().to_core(), &fx.opts),
+        |v: &Variant| v.pos,
+    )
+    .unwrap()
+}
+
+#[test]
+fn native_sharded_is_byte_identical_to_serial() {
+    let fx = fixture();
+    let baseline = to_ndjson(&serial(&fx));
+
+    // Sanity: the baseline actually called the variants we expect to shard around.
+    assert!(baseline.contains("55220177"), "baseline must contain boundary variant");
+    let var_count = serial(&fx).len();
+    assert!(var_count >= 4, "expected several variants, got {var_count}");
+
+    for n in [2usize, 3, 4, 8, 16] {
+        let shards = split_region(CHROM, START, END, n);
+        let native = to_ndjson(&sharded(&fx, &NativeThreadExecutor, &shards));
+        assert_eq!(
+            native, baseline,
+            "native-sharded into {n} shards must be byte-identical to serial"
+        );
+        // The serial executor over the same shards must also match (proves the
+        // merge brain is backend-agnostic; only the dispatch differs).
+        let serial_sharded = to_ndjson(&sharded(&fx, &SerialExecutor, &shards));
+        assert_eq!(serial_sharded, baseline, "serial-executor sharded must match too");
+    }
+}
+
+#[test]
+fn variant_on_shard_boundary_appears_exactly_once() {
+    let fx = fixture();
+    let baseline = to_ndjson(&serial(&fx));
+
+    // Case A: boundary variant is the INCLUSIVE END of shard 0.
+    let shards_a = vec![
+        Shard { index: 0, chrom: CHROM.into(), start: START, end: BOUNDARY_VAR },
+        Shard { index: 1, chrom: CHROM.into(), start: BOUNDARY_VAR + 1, end: END },
+    ];
+    // Case B: boundary variant is the INCLUSIVE START of shard 1.
+    let shards_b = vec![
+        Shard { index: 0, chrom: CHROM.into(), start: START, end: BOUNDARY_VAR - 1 },
+        Shard { index: 1, chrom: CHROM.into(), start: BOUNDARY_VAR, end: END },
+    ];
+
+    for (label, shards) in [("end-of-shard0", shards_a), ("start-of-shard1", shards_b)] {
+        let out = sharded(&fx, &NativeThreadExecutor, &shards);
+        let hits = out.iter().filter(|v| v.pos == BOUNDARY_VAR).count();
+        assert_eq!(hits, 1, "[{label}] boundary variant must appear exactly once, got {hits}");
+        assert_eq!(
+            to_ndjson(&out),
+            baseline,
+            "[{label}] boundary split must still be byte-identical to serial"
+        );
+    }
+}
+
+#[test]
+fn split_at_every_known_variant_position_stays_identical() {
+    let fx = fixture();
+    let baseline = to_ndjson(&serial(&fx));
+    // Split exactly AT each known variant position — the hardest boundary case.
+    for split in [55_003_988i64, 55_214_348, 55_220_177, 55_228_053, 55_249_063] {
+        let shards = vec![
+            Shard { index: 0, chrom: CHROM.into(), start: START, end: split },
+            Shard { index: 1, chrom: CHROM.into(), start: split + 1, end: END },
+        ];
+        let out = to_ndjson(&sharded(&fx, &NativeThreadExecutor, &shards));
+        assert_eq!(out, baseline, "split at variant pos {split} must be identical");
+    }
+}
