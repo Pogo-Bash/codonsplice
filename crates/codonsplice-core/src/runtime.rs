@@ -320,7 +320,7 @@ impl Record {
             ]),
             Record::Alignment(ref a) => Record::Row(vec![
                 ("chrom".into(), RuntimeValue::Str(Arc::from(a.chrom.as_str()))),
-                ("pos".into(), RuntimeValue::Int(a.aln.pos)),
+                ("pos".into(), RuntimeValue::Int(a.aln.pos + 1)), // 1-based (SAM POS), #19/#20
                 ("mapq".into(), RuntimeValue::Int(a.aln.mapq as i64)),
                 ("flag".into(), RuntimeValue::Int(a.aln.flag as i64)),
                 ("depth".into(), RuntimeValue::Int(a.depth)),
@@ -356,7 +356,7 @@ fn aln_field(r: &AlnRow, name: &str) -> RuntimeValue {
     let flag = r.aln.flag;
     match name {
         "chr" | "chrom" => Str(Arc::from(r.chrom.as_str())),
-        "pos" => Int(r.aln.pos),
+        "pos" => Int(r.aln.pos + 1), // 1-based (SAM POS), #19/#20
         "mapq" => Int(r.aln.mapq as i64),
         "flag" => Int(flag as i64),
         "depth" => Int(r.depth),
