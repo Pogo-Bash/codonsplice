@@ -163,6 +163,19 @@ fn format_from_byte(b: u8) -> Format {
     }
 }
 
+/// Decode an `OPEN_ISEC` mode byte into the cnvlens-core set-operation mode.
+/// (Keep in sync with `compiler::isec_mode_byte`.)
+fn isec_mode_from_byte(b: u8) -> vcf::IsecMode {
+    match b {
+        0 => vcf::IsecMode::PrivateA,
+        1 => vcf::IsecMode::PrivateB,
+        2 => vcf::IsecMode::Shared,
+        3 => vcf::IsecMode::SharedB,
+        4 => vcf::IsecMode::Union,
+        _ => vcf::IsecMode::Shared,
+    }
+}
+
 fn format_label(f: &Format) -> &'static str {
     match f {
         Format::Bam => "bam",
@@ -262,6 +275,7 @@ impl Vm {
                 OpCode::OrderBy => self.op_order_by()?,
                 OpCode::Limit => self.op_limit()?,
                 OpCode::WriteInto => self.op_write_into()?,
+                OpCode::OpenIsec => self.op_open_isec()?,
                 OpCode::CallVariants => self.op_call(CallKind::Variants)?,
                 OpCode::CallCnv => self.op_call(CallKind::Cnv)?,
                 OpCode::CallCoverage => self.op_call(CallKind::Coverage)?,
@@ -321,6 +335,7 @@ impl Vm {
                 | OpCode::OrderBy
                 | OpCode::Limit
                 | OpCode::WriteInto
+                | OpCode::OpenIsec
                 | OpCode::CallVariants
                 | OpCode::CallCnv
                 | OpCode::CallCoverage
@@ -393,6 +408,62 @@ impl Vm {
             data,
         };
         self.stack.push(RuntimeValue::Dataset(Arc::new(dataset)));
+        Ok(())
+    }
+
+    /// `OPEN_ISEC`: open two VCF inputs, partition their variants by the chosen
+    /// set-operation mode (bcftools-isec semantics, exact `(chrom,pos,ref,alt)`
+    /// match), and push a cursor whose records are the partition. The downstream
+    /// pipeline (WHERE/SELECT/ORDER/LIMIT/INTO) then refines it as usual.
+    fn op_open_isec(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+        let mode_byte = self.read_u8();
+        let fmt_a = format_from_byte(self.read_u8());
+        let path_a_idx = self.read_u16();
+        let fmt_b = format_from_byte(self.read_u8());
+        let path_b_idx = self.read_u16();
+
+        // Both inputs must be VCF — the partition matches on VCF identity columns.
+        for f in [&fmt_a, &fmt_b] {
+            if !matches!(f, Format::Vcf) {
+                return Err(VmError::SourceFormat {
+                    expected: "vcf",
+                    got: format_label(f),
+                });
+            }
+        }
+
+        let path_a = self.resolve_path(&self.const_str(path_a_idx), pc0)?;
+        let path_b = self.resolve_path(&self.const_str(path_b_idx), pc0)?;
+        let bytes_a = self.io.read_file(&path_a).map_err(VmError::io)?;
+        let bytes_b = self.io.read_file(&path_b).map_err(VmError::io)?;
+
+        let vars_a: Vec<_> = vcf::stream_vcf(&bytes_a, None)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(VmError::core)?;
+        let vars_b: Vec<_> = vcf::stream_vcf(&bytes_b, None)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(VmError::core)?;
+
+        let mode = isec_mode_from_byte(mode_byte);
+        let partition = vcf::isec(&vars_a, &vars_b, mode);
+        let records: Vec<Record> = partition.into_iter().map(Record::Variant).collect();
+
+        // Attach input A as the cursor's dataset so INTO can read its contigs
+        // (VCF has no per-contig length here, matching the existing VCF writer).
+        let dataset = Arc::new(Dataset {
+            format: Format::Vcf,
+            path: path_a,
+            data: DatasetInner::Vcf {
+                bytes: Arc::new(bytes_a),
+            },
+        });
+        let mut cursor = Cursor::new(dataset, None);
+        cursor.records = Some(records);
+        cursor.vars = self.vars.clone();
+        self.stack
+            .push(RuntimeValue::Cursor(Arc::new(Mutex::new(cursor))));
         Ok(())
     }
 

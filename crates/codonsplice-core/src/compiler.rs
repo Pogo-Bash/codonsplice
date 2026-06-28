@@ -75,6 +75,9 @@ pub enum OpCode {
     OrderBy,   // u16 table_off
     Limit,
     WriteInto, // u8 format, u16 path_idx
+    /// VCF set operation: u8 mode, u8 fmt_a, u16 path_a, u8 fmt_b, u16 path_b.
+    /// Opens both inputs, partitions them by mode, and pushes a populated cursor.
+    OpenIsec,
     Halt,
 
     // CALL operation opcodes
@@ -124,6 +127,7 @@ impl OpCode {
             OrderBy => 0x45,
             Limit => 0x46,
             WriteInto => 0x47,
+            OpenIsec => 0x48,
             Halt => 0x4F,
             CallVariants => 0x50,
             CallCnv => 0x51,
@@ -171,6 +175,7 @@ impl OpCode {
             0x45 => OrderBy,
             0x46 => Limit,
             0x47 => WriteInto,
+            0x48 => OpenIsec,
             0x4F => Halt,
             0x50 => CallVariants,
             0x51 => CallCnv,
@@ -190,6 +195,8 @@ impl OpCode {
             | JumpIfFalse | Jump => 2,
             // u8 + u16
             OpenSource | WriteInto => 3,
+            // u8 mode + u8 fmt_a + u16 path_a + u8 fmt_b + u16 path_b
+            OpenIsec => 7,
             // u16 + u8
             CallFn => 3,
             // u16 + u16
@@ -237,6 +244,7 @@ impl OpCode {
             OrderBy => "ORDER_BY",
             Limit => "LIMIT",
             WriteInto => "WRITE_INTO",
+            OpenIsec => "OPEN_ISEC",
             Halt => "HALT",
             CallVariants => "CALL_VARIANTS",
             CallCnv => "CALL_CNV",
@@ -257,6 +265,29 @@ pub fn format_byte(f: &Format) -> u8 {
         Format::Cram => 4,
         Format::Json => 5,
         Format::Tsv => 6,
+    }
+}
+
+/// Encode an [`IsecMode`] as the single byte stored by `OPEN_ISEC`.
+pub fn isec_mode_byte(m: IsecMode) -> u8 {
+    match m {
+        IsecMode::PrivateA => 0,
+        IsecMode::PrivateB => 1,
+        IsecMode::Shared => 2,
+        IsecMode::SharedB => 3,
+        IsecMode::Union => 4,
+    }
+}
+
+/// Decode an `OPEN_ISEC` mode byte back to its mnemonic (for disassembly).
+pub fn isec_mode_name(b: u8) -> &'static str {
+    match b {
+        0 => "private_a",
+        1 => "private_b",
+        2 => "shared",
+        3 => "shared_b",
+        4 => "union",
+        _ => "???",
     }
 }
 
@@ -1092,6 +1123,21 @@ impl Compiler {
     // ── Clause lowering ──────────────────────────────────────────────────────
 
     fn compile_from(&mut self, from: &FromClause) {
+        // A VCF set operation (`ISEC`) opens both inputs and pushes a populated
+        // cursor directly — no OPEN_SOURCE/SCAN, since the partition *is* the
+        // record set the rest of the pipeline (WHERE/SELECT/ORDER/LIMIT/INTO)
+        // refines.
+        if let Some(isec) = &from.isec {
+            self.emit(OpCode::OpenIsec, from.span);
+            self.code.push(isec_mode_byte(isec.mode));
+            self.code.push(format_byte(&from.format));
+            let path_a = self.intern(Value::Str(Rc::from(from.path.as_str())));
+            self.emit_u16(path_a);
+            self.code.push(format_byte(&isec.format));
+            let path_b = self.intern(Value::Str(Rc::from(isec.path.as_str())));
+            self.emit_u16(path_b);
+            return;
+        }
         self.emit(OpCode::OpenSource, from.span);
         self.code.push(format_byte(&from.format));
         let path_idx = self.intern(Value::Str(Rc::from(from.path.as_str())));
@@ -1804,6 +1850,22 @@ fn disasm_one(
             let fmt = read_u8(pc);
             let path = konst(read_u16(pc));
             format!("{:<13}{} {}", op.name(), format_name(fmt), path)
+        }
+        OpCode::OpenIsec => {
+            let mode = read_u8(pc);
+            let fmt_a = read_u8(pc);
+            let path_a = konst(read_u16(pc));
+            let fmt_b = read_u8(pc);
+            let path_b = konst(read_u16(pc));
+            format!(
+                "{:<13}{} {} {} ISEC {} {}",
+                op.name(),
+                isec_mode_name(mode),
+                format_name(fmt_a),
+                path_a,
+                format_name(fmt_b),
+                path_b
+            )
         }
         OpCode::Filter => {
             let off = read_u16(pc);
