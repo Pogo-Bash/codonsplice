@@ -259,6 +259,7 @@ impl Vm {
                 OpCode::Filter => self.op_filter()?,
                 OpCode::Project => self.op_project()?,
                 OpCode::SetParam => self.op_set_param()?,
+                OpCode::Annotate => self.op_annotate()?,
                 OpCode::OrderBy => self.op_order_by()?,
                 OpCode::Limit => self.op_limit()?,
                 OpCode::WriteInto => self.op_write_into()?,
@@ -318,6 +319,7 @@ impl Vm {
                 | OpCode::Filter
                 | OpCode::Project
                 | OpCode::SetParam
+                | OpCode::Annotate
                 | OpCode::OrderBy
                 | OpCode::Limit
                 | OpCode::WriteInto
@@ -478,6 +480,60 @@ impl Vm {
         let key = self.const_str(key_idx);
         let value = self.pop(pc0)?;
         self.pending_params.push((key, value));
+        Ok(())
+    }
+
+    /// Build the `ANNOTATE` annotator from the reserved database paths stashed in
+    /// `pending_params` (`__annotate_genes` / `__annotate_clinvar`), reading each
+    /// file through `Io`, and store it on the cursor. Materialization applies it
+    /// per record. All reads are local — no network (the offline/WASM thesis).
+    fn op_annotate(&mut self) -> Result<(), VmError> {
+        let pc0 = self.pc;
+        self.pc += 1;
+
+        let path_for = |vm: &Self, k: &str| -> Option<String> {
+            vm.pending_params.iter().find_map(|(key, v)| {
+                if key.as_ref() == k {
+                    match v {
+                        RuntimeValue::Str(s) => Some(s.to_string()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+        };
+        let genes_path = path_for(self, "__annotate_genes");
+        let clinvar_path = path_for(self, "__annotate_clinvar");
+
+        let read = |vm: &Self, p: &Option<String>| -> Result<Option<Vec<u8>>, VmError> {
+            match p {
+                Some(path) => {
+                    let bytes = vm.io.read_file(path).map_err(|e| {
+                        VmError::Io(format!("annotate database {path:?}: {e}"))
+                    })?;
+                    Ok(Some(bytes))
+                }
+                None => Ok(None),
+            }
+        };
+        let genes = read(self, &genes_path)?;
+        let clinvar = read(self, &clinvar_path)?;
+        // The `WITH reference = "ref.fa"` FASTA (if any) lets the annotator emit
+        // HGVS protein/cDNA (`aa_change`/`hgvs_c`); without it those columns are
+        // ".". Same reserved param the variant caller reads for REF bases.
+        let reference_path = path_for(self, "reference");
+        let reference = read(self, &reference_path)?;
+
+        let annotator = crate::annotate::Annotator::from_sources(
+            genes.as_deref(),
+            clinvar.as_deref(),
+            reference.as_deref(),
+        )
+        .map_err(VmError::core)?;
+
+        let cursor = self.peek_cursor(pc0)?;
+        cursor.lock().unwrap().annotator = Some(Arc::new(annotator));
         Ok(())
     }
 
@@ -1448,6 +1504,17 @@ pub fn record_to_json(r: &Record) -> serde_json::Value {
     use serde_json::json;
     match r {
         Record::Variant(v) => serde_json::to_value(v).unwrap_or(json!({})),
+        // An annotated variant serializes as its variant object with the
+        // annotation columns merged in (`SELECT *` / `INTO json`).
+        Record::AnnotatedVariant { variant, annotations } => {
+            let mut val = serde_json::to_value(variant).unwrap_or(json!({}));
+            if let serde_json::Value::Object(map) = &mut val {
+                for (k, v) in annotations {
+                    map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                }
+            }
+            val
+        }
         Record::CoverageWindow(w) => serde_json::to_value(w).unwrap_or(json!({})),
         Record::Cnv(v) => v.clone(),
         Record::Alignment(a) => json!({
@@ -1842,72 +1909,10 @@ fn display_value(v: &RuntimeValue) -> String {
     }
 }
 
-/// Fraction of G/C among A/C/G/T bases (other symbols ignored); 0.0 if none.
-fn gc_fraction(seq: &str) -> f64 {
-    let (mut gc, mut at) = (0u64, 0u64);
-    for b in seq.bytes() {
-        match b.to_ascii_uppercase() {
-            b'G' | b'C' => gc += 1,
-            b'A' | b'T' => at += 1,
-            _ => {}
-        }
-    }
-    let denom = gc + at;
-    if denom == 0 {
-        0.0
-    } else {
-        gc as f64 / denom as f64
-    }
-}
-
-/// Reverse complement of a DNA string (uppercased; N and unknowns pass through).
-fn revcomp(seq: &str) -> String {
-    seq.chars()
-        .rev()
-        .map(|c| match c.to_ascii_uppercase() {
-            'A' => 'T',
-            'T' | 'U' => 'A',
-            'C' => 'G',
-            'G' => 'C',
-            other => other,
-        })
-        .collect()
-}
-
-/// Map a base to its index in T,C,A,G order (the layout of the codon table).
-fn base_idx(b: u8) -> Option<usize> {
-    match b.to_ascii_uppercase() {
-        b'T' | b'U' => Some(0),
-        b'C' => Some(1),
-        b'A' => Some(2),
-        b'G' => Some(3),
-        _ => None,
-    }
-}
-
-/// Single-letter amino acid for a DNA codon (NCBI table 1). `*` = stop, `X` =
-/// codon containing a non-ACGT base.
-fn codon_aa(c: &[u8]) -> char {
-    // Amino acids indexed by base1*16 + base2*4 + base3, each base in T,C,A,G order.
-    const AAS: &[u8] = b"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG";
-    match (base_idx(c[0]), base_idx(c[1]), base_idx(c[2])) {
-        (Some(a), Some(b), Some(d)) => AAS[a * 16 + b * 4 + d] as char,
-        _ => 'X',
-    }
-}
-
-/// Translate DNA to a single-letter amino-acid string from `frame` (0/1/2); a
-/// trailing partial codon is dropped.
-fn translate_dna(seq: &str, frame: usize) -> String {
-    let bases: Vec<u8> = seq.bytes().collect();
-    let mut aa = String::new();
-    let mut i = frame;
-    while i + 3 <= bases.len() {
-        aa.push(codon_aa(&bases[i..i + 3]));
-        i += 3;
-    }
-    aa
-}
+// The genetic code, translation, GC fraction and reverse-complement all live in
+// the single shared `crate::codon` module; the genomic builtins below delegate
+// to it so there is exactly one codon implementation across the engine.
+use crate::codon;
 
 /// Dispatch a builtin by name. `args` are in call order; `_pc` is kept for
 /// parity with the other VM helpers and future span-aware errors.
@@ -2074,31 +2079,30 @@ fn call_builtin(name: &str, args: &[RuntimeValue], _pc: usize) -> Result<Runtime
         // ── genomic ──────────────────────────────────────────────────────
         "gc" => {
             arity(1)?;
-            Ok(Float(gc_fraction(&text(0)?)))
+            Ok(Float(codon::gc(&text(0)?)))
         }
         "revcomp" => {
             arity(1)?;
-            Ok(Str(std::sync::Arc::from(revcomp(&text(0)?))))
+            Ok(Str(std::sync::Arc::from(codon::revcomp(&text(0)?))))
         }
         "translate" => match args.len() {
-            1 => Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, 0)))),
+            1 => Ok(Str(std::sync::Arc::from(codon::translate(&text(0)?, 0)))),
             2 => {
                 let frame = as_i64(&args[1]).unwrap_or(0).max(0) as usize;
-                Ok(Str(std::sync::Arc::from(translate_dna(&text(0)?, frame))))
+                Ok(Str(std::sync::Arc::from(codon::translate(&text(0)?, frame))))
             }
             n => Err(bad(format!("translate() takes 1 or 2 arguments, got {n}"))),
         },
         "codon_at" => {
             arity(2)?;
-            let chars: Vec<char> = text(0)?.chars().collect();
             let i = as_i64(&args[1]).unwrap_or(-1);
-            if i < 0 || (i as usize) + 3 > chars.len() {
+            if i < 0 {
                 Ok(Null)
             } else {
-                let i = i as usize;
-                Ok(Str(std::sync::Arc::from(
-                    chars[i..i + 3].iter().collect::<String>(),
-                )))
+                match codon::codon_at_index(&text(0)?, i as usize) {
+                    Some(c) => Ok(Str(std::sync::Arc::from(c))),
+                    None => Ok(Null),
+                }
             }
         }
         _ => Err(bad(format!("unknown function {name}()"))),

@@ -48,6 +48,26 @@ pub fn materialize(cursor: Arc<Mutex<Cursor>>, _source: &str) -> Result<Vec<Reco
     };
     let vars = guard.vars.clone();
 
+    // 0. ANNOTATE: enrich each variant with the local-database join columns
+    //    BEFORE the predicate/projection, so `WHERE`/`SELECT` see gene/exon/
+    //    clinvar fields. Non-variant records pass through untouched.
+    let raw = if let Some(annotator) = &guard.annotator {
+        raw.into_iter()
+            .map(|r| match r {
+                Record::Variant(v) => {
+                    let annotations = annotator.annotate(&v);
+                    Record::AnnotatedVariant {
+                        variant: v,
+                        annotations,
+                    }
+                }
+                other => other,
+            })
+            .collect()
+    } else {
+        raw
+    };
+
     // Share rows cheaply with the per-record evaluators.
     let mut rows: Vec<Arc<Record>> = raw.into_iter().map(Arc::new).collect();
 

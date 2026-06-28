@@ -23,6 +23,10 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # 16 kb window) to estimate read density, plus the BAM header to resolve a chrom
 # to its reference id. Same noodles release cnvlens-core links, so no version skew.
 noodles = { version = "0.111", features = ["bam", "bgzf", "csi", "core", "sam"] }
+# ANNOTATE reads local GFF (plain) and ClinVar (BGZF) annotation databases.
+# flate2's MultiGzDecoder transparently inflates BGZF (a series of concatenated
+# gzip blocks) for whole-file decode — no noodles/bgzf dependency needed here.
+flate2 = "1"
 
 [dev-dependencies]
 # Integration tests compare the VM against direct cnvlens-core calls and parse
