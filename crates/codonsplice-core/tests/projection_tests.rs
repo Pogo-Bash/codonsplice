@@ -91,7 +91,7 @@ fn select_star_passes_full_records() {
 
 #[test]
 fn projection_on_coverage_windows() {
-    let rs = rows(r#"SELECT chrom, coverage WHERE chr = "7" CALL cnv WITH window_size = 50000 LIMIT 3"#);
+    let rs = rows(r#"SELECT chrom, coverage WHERE chr = "7" CALL coverage WITH window_size = 50000 LIMIT 3"#);
     assert!(!rs.is_empty());
     for r in &rs {
         assert_eq!(col(r, "chrom"), RuntimeValue::Str("7".into()));
