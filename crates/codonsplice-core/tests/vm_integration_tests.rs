@@ -88,10 +88,93 @@ fn call_variants_streams_records() {
 }
 
 #[test]
-fn call_cnv_streams_coverage_windows() {
-    let recs = run_records(&q(r#"WHERE chr = "7" CALL cnv WITH window_size = 10000"#));
+fn call_coverage_streams_coverage_windows() {
+    // `CALL coverage` is the raw-window verb (was `CALL cnv` before detection
+    // was split out): it emits one CoverageWindow record per bin.
+    let recs = run_records(&q(r#"WHERE chr = "7" CALL coverage WITH window_size = 10000"#));
     assert!(!recs.is_empty());
     assert!(recs.iter().all(|r| matches!(r, Record::CoverageWindow(_))));
+}
+
+#[test]
+fn call_cnv_emits_cnv_records_not_coverage_windows() {
+    // `CALL cnv` must RUN copy-number detection over the coverage windows and
+    // emit CNV call records (amplification/deletion), NOT pass the raw windows
+    // through. Detection collapses the hundreds of bins into a handful (or zero)
+    // of events, so the CNV stream is strictly smaller than the window stream.
+    let cnvs = run_records(&q(
+        r#"WHERE chr = "7" CALL cnv WITH window_size = 1000, amp_threshold = 1.5, del_threshold = 0.5, min_windows = 3"#,
+    ));
+    let windows = run_records(&q(r#"WHERE chr = "7" CALL coverage WITH window_size = 1000"#));
+    assert!(
+        cnvs.len() < windows.len(),
+        "CALL cnv must run detection, not stream windows ({} cnvs vs {} windows)",
+        cnvs.len(),
+        windows.len()
+    );
+    assert!(
+        cnvs.iter().all(|r| r.kind_name() == "cnv"),
+        "every record must be a CNV call, got kinds {:?}",
+        cnvs.iter().map(|r| r.kind_name()).collect::<Vec<_>>()
+    );
+    for r in &cnvs {
+        let t = record_to_json(r)
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        assert!(
+            matches!(t.as_deref(), Some("amplification") | Some("deletion")),
+            "CNV record carries an amp/del type, got {t:?}"
+        );
+        // copy_number and chrom must be queryable (SELECT/WHERE composition).
+        assert!(record_to_json(r).get("copy_number").is_some());
+        assert_eq!(
+            record_to_json(r).get("chrom").and_then(|v| v.as_str()),
+            Some("7")
+        );
+    }
+}
+
+#[test]
+fn call_cnv_negative_control_flat_intronic_region() {
+    // HONEST negative control. NA12878 is a germline DIPLOID normal, BUT this
+    // BAM is a TARGETED EGFR capture: exonic depth (hundreds of x) dwarfs the
+    // intron-dominated median, so naive within-sample depth-ratio detection
+    // flags exon peaks as "amplifications" (no panel-of-normals to correct the
+    // capture bias). The legitimate negative control is therefore a genuinely
+    // FLAT intronic stretch — 7:55121000-55177000 is 56 contiguous windows with
+    // depth-ratio ~1.0 in testdata/cnv_depth_baseline.bed. There, CALL cnv must
+    // emit ZERO events; any call is a false positive on flat diploid signal.
+    let cnvs = run_records(&q(
+        r#"WHERE chr = "7" AND pos >= 55121000 AND pos <= 55177000 CALL cnv WITH window_size = 1000, amp_threshold = 1.5, del_threshold = 0.5, min_windows = 3"#,
+    ));
+    assert!(
+        cnvs.is_empty(),
+        "flat intronic region produced {} spurious CNV call(s): {:?}",
+        cnvs.len(),
+        cnvs.iter().map(record_to_json).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn call_cnv_records_respect_inclusive_region_bounds() {
+    // #20 half-open class: CNV windowing uses INCLUSIVE region boundaries. Every
+    // emitted CNV interval must fall inside the requested inclusive region and be
+    // a non-empty half-open [start,end) span.
+    let region_start: i64 = 54990000;
+    let region_end: i64 = 55300000;
+    let cnvs = run_records(&q(&format!(
+        r#"WHERE chr = "7" AND pos >= {region_start} AND pos <= {region_end} CALL cnv WITH window_size = 1000, amp_threshold = 1.5, del_threshold = 0.5, min_windows = 3"#
+    )));
+    for r in &cnvs {
+        let s = record_to_json(r).get("start").and_then(|v| v.as_i64()).unwrap();
+        let e = record_to_json(r).get("end").and_then(|v| v.as_i64()).unwrap();
+        assert!(s < e, "CNV start {s} must precede end {e}");
+        assert!(
+            s >= region_start && e <= region_end + 1,
+            "CNV [{s},{e}) escapes inclusive region [{region_start},{region_end}]"
+        );
+    }
 }
 
 // ── Group 3 — per-record WHERE predicate ─────────────────────────────────────
@@ -157,9 +240,9 @@ fn write_into_roundtrip_bed() {
     let tmp_s = tmp.to_string_lossy().into_owned();
 
     // Run once to count windows, once to write them out.
-    let windows = run_records(&q(r#"WHERE chr = "7" CALL cnv WITH window_size = 50000"#));
+    let windows = run_records(&q(r#"WHERE chr = "7" CALL coverage WITH window_size = 50000"#));
     let program = compile(&q(&format!(
-        r#"WHERE chr = "7" CALL cnv WITH window_size = 50000 INTO bed "{tmp_s}""#
+        r#"WHERE chr = "7" CALL coverage WITH window_size = 50000 INTO bed "{tmp_s}""#
     )))
     .unwrap();
     match Vm::new(program).run().unwrap() {

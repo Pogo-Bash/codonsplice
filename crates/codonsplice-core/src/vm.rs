@@ -554,17 +554,25 @@ impl Vm {
                 let mut c = cursor.lock().unwrap();
                 c.producer = Some(producer);
             }
-            CallKind::Cnv | CallKind::Coverage => {
+            CallKind::Coverage => {
                 let opts = self.build_coverage_options();
-                let bytes = self.require_bam(&ds, "coverage")?;
-                let windows = match (&region, ds.bai_bytes()) {
-                    (Some(r), Some(bai)) => {
-                        coverage::analyze_coverage_region(bytes, bai, &r.to_core(), &opts)
-                    }
-                    _ => coverage::coverage_windows(bytes, None, &opts),
-                }
-                .map_err(VmError::core)?;
+                let windows = self.compute_coverage_windows(&ds, &region, &opts)?;
                 let records = windows.into_iter().map(Record::CoverageWindow).collect();
+                let mut c = cursor.lock().unwrap();
+                c.records = Some(records);
+                c.options = QueryOptions::Coverage(opts);
+            }
+            CallKind::Cnv => {
+                // `CALL cnv` runs copy-number DETECTION over the coverage windows
+                // (unlike `CALL coverage`, which streams the raw bins): it emits
+                // amplification/deletion call records, not windows.
+                let opts = self.build_coverage_options();
+                let windows = self.compute_coverage_windows(&ds, &region, &opts)?;
+                let cnvs = detect_cnvs(&windows, &opts);
+                let records = cnvs
+                    .into_iter()
+                    .map(|v| Record::Cnv(normalize_cnv(v)))
+                    .collect();
                 let mut c = cursor.lock().unwrap();
                 c.records = Some(records);
                 c.options = QueryOptions::Coverage(opts);
@@ -693,6 +701,25 @@ impl Vm {
             )));
         }
         Ok(Some(seqs))
+    }
+
+    /// Bin the BAM into coverage windows over the (optional) region, seeking via
+    /// BAI when one is present. Shared by `CALL coverage` (which surfaces the
+    /// windows) and `CALL cnv` (which runs detection over them).
+    fn compute_coverage_windows(
+        &self,
+        ds: &Dataset,
+        region: &Option<crate::runtime::Region>,
+        opts: &CoverageOptions,
+    ) -> Result<Vec<cnvlens_core::model::CoverageWindow>, VmError> {
+        let bytes = self.require_bam(ds, "coverage")?;
+        match (region, ds.bai_bytes()) {
+            (Some(r), Some(bai)) => {
+                coverage::analyze_coverage_region(bytes, bai, &r.to_core(), opts)
+            }
+            _ => coverage::coverage_windows(bytes, None, opts),
+        }
+        .map_err(VmError::core)
     }
 
     fn build_coverage_options(&self) -> CoverageOptions {
@@ -1337,6 +1364,80 @@ pub fn records_to_tsv(records: &[Record]) -> String {
     out
 }
 
+/// Run copy-number detection over coverage windows, dispatching the same way
+/// cnvlens-core does for its UI: manual thresholds when the user supplied
+/// `amp_threshold`/`del_threshold`, otherwise CBS-lite or the adaptive
+/// threshold scan keyed on the region's coverage class. Returns one JSON object
+/// per CNV call (see [`normalize_cnv`]).
+fn detect_cnvs(
+    windows: &[cnvlens_core::model::CoverageWindow],
+    opts: &CoverageOptions,
+) -> Vec<serde_json::Value> {
+    use cnvlens_core::cnv;
+    if opts.use_manual_thresholds {
+        cnv::detect_cnvs_manual(
+            windows,
+            opts.amp_threshold.unwrap_or(1.5),
+            opts.del_threshold.unwrap_or(0.5),
+            opts.min_windows.unwrap_or(3),
+        )
+    } else {
+        let class = coverage_class(windows);
+        match opts.segmentation_method.as_deref() {
+            Some("cbs_lite") | Some("cbs") => cnv::detect_cnvs_cbs_lite(windows, class, 3, 3.0),
+            _ => cnv::detect_cnvs_adaptive(windows, class),
+        }
+    }
+}
+
+/// Coverage class from window depths — mirrors `cnvlens_core::coverage`'s
+/// median-based banding so adaptive/CBS detection picks the same thresholds.
+fn coverage_class(windows: &[cnvlens_core::model::CoverageWindow]) -> &'static str {
+    let nonzero: Vec<f64> = windows
+        .iter()
+        .filter(|w| w.coverage > 0)
+        .map(|w| w.coverage as f64)
+        .collect();
+    if nonzero.is_empty() {
+        return "high";
+    }
+    let med = cnvlens_core::stats::median(&nonzero);
+    if med < 15.0 {
+        "low"
+    } else if med < 30.0 {
+        "medium"
+    } else {
+        "high"
+    }
+}
+
+/// Normalize a cnvlens CNV summary to the snake_case schema the rest of the
+/// engine speaks (the UI JSON mixes `copyNumber`/`avgCoverage` camelCase with
+/// snake_case keys). Keys absent from a given detector (e.g. `t_statistic`) are
+/// dropped rather than emitted as null.
+fn normalize_cnv(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as J;
+    let mut out = serde_json::Map::new();
+    let mut put = |out_key: &str, src: Option<&J>| {
+        if let Some(val) = src {
+            if !val.is_null() {
+                out.insert(out_key.to_string(), val.clone());
+            }
+        }
+    };
+    put("chrom", v.get("chromosome"));
+    put("start", v.get("start"));
+    put("end", v.get("end"));
+    put("length", v.get("length"));
+    put("type", v.get("type"));
+    put("copy_number", v.get("copyNumber"));
+    put("avg_coverage", v.get("avgCoverage"));
+    put("confidence", v.get("confidence"));
+    put("num_windows", v.get("num_windows"));
+    put("t_statistic", v.get("t_statistic"));
+    J::Object(out)
+}
+
 /// Records → JSON array (lossless; used for roundtrip + the WASM bridge).
 pub fn records_to_json(records: &[Record]) -> String {
     let arr: Vec<serde_json::Value> = records.iter().map(record_to_json).collect();
@@ -1348,6 +1449,7 @@ pub fn record_to_json(r: &Record) -> serde_json::Value {
     match r {
         Record::Variant(v) => serde_json::to_value(v).unwrap_or(json!({})),
         Record::CoverageWindow(w) => serde_json::to_value(w).unwrap_or(json!({})),
+        Record::Cnv(v) => v.clone(),
         Record::Alignment(a) => json!({
             "chrom": a.chrom,
             "pos": a.pos_1based(), // 1-based (SAM POS), #19

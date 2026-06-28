@@ -292,6 +292,11 @@ pub enum Record {
     Alignment(AlnRow),
     Variant(Variant),
     CoverageWindow(CoverageWindow),
+    /// A copy-number call (amplification/deletion) produced by `CALL cnv`,
+    /// carried as the normalized snake_case JSON object that
+    /// `cnvlens_core::cnv::detect_cnvs_*` emits (keys: chrom, start, end, type,
+    /// copy_number, confidence, num_windows, …).
+    Cnv(serde_json::Value),
     Header(Vec<(String, usize)>),
     /// A projected output row (from `SELECT col, ...`): an ordered list of
     /// `(column_name, value)` pairs.
@@ -304,6 +309,7 @@ impl Record {
             Record::Alignment(_) => "alignment",
             Record::Variant(_) => "variant",
             Record::CoverageWindow(_) => "coverage_window",
+            Record::Cnv(_) => "cnv",
             Record::Header(_) => "header",
             Record::Row(_) => "row",
         }
@@ -331,6 +337,15 @@ impl Record {
                 ("coverage".into(), RuntimeValue::Int(w.coverage)),
                 ("normalized".into(), RuntimeValue::Float(w.normalized)),
             ]),
+            Record::Cnv(_) => Record::Row(vec![
+                ("chrom".into(), self.get_field("chrom")),
+                ("start".into(), self.get_field("start")),
+                ("end".into(), self.get_field("end")),
+                ("type".into(), self.get_field("type")),
+                ("copy_number".into(), self.get_field("copy_number")),
+                ("confidence".into(), self.get_field("confidence")),
+                ("num_windows".into(), self.get_field("num_windows")),
+            ]),
             Record::Alignment(ref a) => Record::Row(vec![
                 ("chrom".into(), RuntimeValue::Str(Arc::from(a.chrom.as_str()))),
                 ("pos".into(), RuntimeValue::Int(a.pos_1based())), // 1-based (SAM POS), #19/#20
@@ -354,6 +369,7 @@ impl Record {
             Record::Alignment(r) => aln_field(r, name),
             Record::Variant(v) => variant_field(v, name),
             Record::CoverageWindow(w) => window_field(w, name),
+            Record::Cnv(v) => cnv_field(v, name),
             Record::Header(_) => RuntimeValue::Null,
             Record::Row(cols) => cols
                 .iter()
@@ -417,6 +433,36 @@ fn window_field(w: &CoverageWindow, name: &str) -> RuntimeValue {
         "coverage" => Int(w.coverage),
         "normalized" => Float(w.normalized),
         "masked" => Bool(w.masked.unwrap_or(false)),
+        _ => Null,
+    }
+}
+
+/// Resolve a field on a `CALL cnv` record. The backing JSON is the normalized
+/// snake_case object from `cnvlens_core::cnv` (chrom/start/end/type/
+/// copy_number/confidence/num_windows/avg_coverage/length/t_statistic). A few
+/// aliases keep predicates uniform with the other record kinds: `chr`→`chrom`,
+/// and `pos`→`start` so a `WHERE pos >= … AND pos <= …` clause (the region
+/// idiom) filters CNV calls by their start coordinate.
+fn cnv_field(v: &serde_json::Value, name: &str) -> RuntimeValue {
+    use RuntimeValue::*;
+    let key = match name {
+        "chr" => "chrom",
+        "pos" => "start",
+        "cn" | "copyNumber" => "copy_number",
+        other => other,
+    };
+    match v.get(key) {
+        Some(serde_json::Value::String(s)) => Str(Arc::from(s.as_str())),
+        Some(serde_json::Value::Bool(b)) => Bool(*b),
+        Some(serde_json::Value::Number(n)) => {
+            if let Some(i) = n.as_i64() {
+                Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Float(f)
+            } else {
+                Null
+            }
+        }
         _ => Null,
     }
 }
