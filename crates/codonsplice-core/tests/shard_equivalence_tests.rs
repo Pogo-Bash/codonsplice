@@ -152,6 +152,45 @@ fn variant_on_shard_boundary_appears_exactly_once() {
     }
 }
 
+/// End-to-end through the public `Vm`: the same `CALL variants` query run with
+/// sharding forced ON (`SPLICE_SHARDS=8`) must produce byte-identical output to
+/// the serial path (`SPLICE_SHARDS=1`). This exercises the real VM dispatch
+/// (`stream_variants` serial vs `call_variants_region` sharded), not just the
+/// cnvlens producer in isolation.
+#[test]
+fn vm_query_is_identical_with_and_without_sharding() {
+    use codonsplice_core::{compile, Vm, VmOutput};
+
+    let bam = data_path("NA12878_EGFR.bam");
+    let reference = data_path("EGFR_region.fa");
+    let query = format!(
+        "FROM bam \"{}\" WHERE chr = \"7\" AND pos >= {START} AND pos <= {END} \
+         CALL variants WITH reference = \"{}\"",
+        bam.to_string_lossy(),
+        reference.to_string_lossy(),
+    );
+
+    let run = |shards: &str| -> String {
+        std::env::set_var("SPLICE_SHARDS", shards);
+        let program = compile(&query).unwrap();
+        let out = Vm::new(program).run().unwrap();
+        std::env::remove_var("SPLICE_SHARDS");
+        let recs = match out {
+            VmOutput::Records(r) | VmOutput::Rows(r) => r,
+            other => panic!("expected records, got {other:?}"),
+        };
+        recs.iter()
+            .map(|r| codonsplice_core::vm::record_to_json(r).to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let serial = run("1");
+    let sharded = run("8");
+    assert!(serial.contains("55220177"), "query should find the boundary variant");
+    assert_eq!(serial, sharded, "VM output must be identical sharded vs serial");
+}
+
 #[test]
 fn split_at_every_known_variant_position_stays_identical() {
     let fx = fixture();

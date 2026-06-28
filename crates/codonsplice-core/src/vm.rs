@@ -543,8 +543,9 @@ impl Vm {
                 // backend is available.
                 opts.reference_seqs = self.load_reference_seqs()?;
                 let core_region = region.as_ref().map(|r| r.to_core());
-                let producer: crate::runtime::RecordProducer =
-                    Box::new(move |limit| variant_producer(&ds, &opts, core_region.as_ref(), is_vcf, limit));
+                let producer: crate::runtime::RecordProducer = Box::new(move |limit| {
+                    sharded_variant_producer(&ds, &opts, core_region.as_ref(), is_vcf, limit)
+                });
                 let mut c = cursor.lock().unwrap();
                 c.producer = Some(producer);
             }
@@ -982,6 +983,74 @@ fn as_f64(v: &RuntimeValue) -> Option<f64> {
         RuntimeValue::Str(s) => s.trim().parse().ok(),
         _ => None,
     }
+}
+
+/// Region-sharded wrapper around [`variant_producer`] (Track 2).
+///
+/// When the query pushed down a bounded BAM region big enough to be worth it
+/// (see [`crate::shard::plan_shard_count`]) and no `LIMIT` is in play, this
+/// splits the region into boundary-correct shards and runs the per-shard pileup
+/// across native threads, merging back to the **exact same** record stream the
+/// serial path would produce. Every other case — a VCF, a `LIMIT` (whose
+/// early-exit must stay serial), an unbounded/small region, a single core, or
+/// `SPLICE_SHARDS=1` — falls straight through to the serial producer. Threading
+/// is a speed enhancement here, never load-bearing.
+fn sharded_variant_producer(
+    ds: &Dataset,
+    opts: &VariantOptions,
+    region: Option<&cnvlens_core::model::Region>,
+    is_vcf: bool,
+    limit: Option<usize>,
+) -> Result<Vec<Record>, CoreError> {
+    let serial = || variant_producer(ds, opts, region, is_vcf, limit);
+
+    // LIMIT keeps the serial early-exit; VCF has its own streaming path. Sharding
+    // also needs a BAM + BAI to do per-shard random access.
+    if is_vcf || limit.is_some() {
+        return serial();
+    }
+    let (Some(bam), Some(bai)) = (ds.bam_bytes(), ds.bai_bytes()) else {
+        return serial();
+    };
+    let shards = match plan_variant_shards(region) {
+        Some(s) => s,
+        None => return serial(),
+    };
+
+    // Shard over plain `Variant` payloads (which are `Send`), not `Record`
+    // (which can wrap a non-`Send` `Cursor`). The boundary-correct clamp keeps
+    // each variant in exactly one shard; we wrap into records after merging.
+    let merged = crate::shard::shard_and_merge(
+        &crate::shard::NativeThreadExecutor,
+        &shards,
+        |s: &crate::shard::Shard| {
+            variants::call_variants_region(bam, bai, &s.to_core_region().to_core(), opts)
+        },
+        |v: &cnvlens_core::model::Variant| v.pos,
+    )?;
+    Ok(merged.into_iter().map(Record::Variant).collect())
+}
+
+/// Plan the shard split for a variant region, honouring the `SPLICE_SHARDS`
+/// override (`0`/`1` forces serial; `N` requests up to N-way). Returns `None`
+/// when the region is unbounded, empty, or too small to shard — i.e. run serial.
+fn plan_variant_shards(
+    region: Option<&cnvlens_core::model::Region>,
+) -> Option<Vec<crate::shard::Shard>> {
+    let r = region?;
+    let (start, end) = (r.start?, r.end?);
+    if end <= start {
+        return None;
+    }
+    let available = match std::env::var("SPLICE_SHARDS").ok().and_then(|s| s.parse::<usize>().ok()) {
+        Some(n) => n,
+        None => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+    };
+    let n = crate::shard::plan_shard_count(end - start + 1, available);
+    if n <= 1 {
+        return None;
+    }
+    Some(crate::shard::split_region(&r.chrom, start, end, n))
 }
 
 /// Produce variant records for `CALL_VARIANTS`, dispatching by source format.

@@ -106,6 +106,32 @@ pub fn split_region(chrom: &str, start: i64, end: i64, n: usize) -> Vec<Shard> {
     shards
 }
 
+/// Minimum region span (count of inclusive positions) worth sharding. Below
+/// this, the per-shard BAI re-seek + thread-spawn overhead outweighs the
+/// parallelism win. Measured on the EGFR sample: a ~310kb region is a ~100ms
+/// CPU-bound core and 2-way sharding already pays off (~1.4x), so a 50kb floor
+/// is conservative — smaller queries simply run single-threaded.
+pub const MIN_SHARD_SPAN: i64 = 50_000;
+
+/// Decide how many shards a region of `span` inclusive positions should split
+/// into, given `available` parallelism.
+///
+/// Returns **1 (run serially)** when only one core is available or the span is
+/// below [`MIN_SHARD_SPAN`]. This encodes the load-bearing single-thread rule:
+/// threading is a *speed enhancement*, never required for correctness, so the
+/// default for anything small or single-core is plain serial execution. The
+/// same function is what a WASM backend calls after detecting
+/// `crossOriginIsolated` (passing `available = 1` when SAB is unavailable, which
+/// forces serial).
+pub fn plan_shard_count(span: i64, available: usize) -> usize {
+    if available <= 1 || span < MIN_SHARD_SPAN {
+        return 1;
+    }
+    // Don't carve shards thinner than MIN_SHARD_SPAN, and never exceed cores.
+    let by_span = (span / MIN_SHARD_SPAN).max(1) as usize;
+    by_span.min(available)
+}
+
 /// The dispatch backend: runs a closure over each shard and returns the results
 /// **in shard order** (result `i` corresponds to `shards[i]`). This is the ONLY
 /// surface a parallel backend implements; the merge brain
@@ -268,6 +294,18 @@ mod tests {
         let s = split_region("7", 1, 3, 10);
         assert_eq!(s.len(), 3);
         assert_partition(&s, 1, 3);
+    }
+
+    #[test]
+    fn plan_shard_count_honours_single_thread_rule() {
+        // Single core => always serial, regardless of span.
+        assert_eq!(plan_shard_count(10_000_000, 1), 1);
+        // Small span => serial even with many cores.
+        assert_eq!(plan_shard_count(MIN_SHARD_SPAN - 1, 16), 1);
+        // Large span scales with cores but is capped by both span and cores.
+        assert_eq!(plan_shard_count(MIN_SHARD_SPAN * 4, 16), 4); // span-limited
+        assert_eq!(plan_shard_count(MIN_SHARD_SPAN * 100, 8), 8); // core-limited
+        assert_eq!(plan_shard_count(0, 16), 1);
     }
 
     // A toy "variant" to exercise the clamp+merge without a BAM.
