@@ -83,3 +83,36 @@ Ship the CIGAR pileup — it is a strict improvement (SNV precision 0.04→1.00 
 - 1.4 BIG finding: the old ungapped loop over-called (280 SNVs on EGFR BAM, soft-clip-misplacement FPs). CIGAR-correct pileup → 5 clean het SNVs (worker claims all GIAB TPs). walk generalized to walk_cigar_full (Aligned match-runs + Indel spans); walk_cigar now a filter over it → no cursor divergence, 1.2 tests intact. Superproject streaming_tests.rs `>5` relaxed to `>=5` (encoded buggy over-calling). NEEDS rigorous review: validate the SNV set is BETTER (precision up, recall not down) vs a regression, + real indel differential.
 - 1.2 review APPROVE. Two NON-BLOCKING hardening items to fold into Task 1.4 (same file): (a) optional `if read_cur+len <= seq.len()` guard on the Ins slice in walk_cigar (pub fn, panics on malformed CIGAR-vs-seq; unreachable on real BAMs but cheap to guard); (b) add a Pad-op test and a trailing-insertion test.
 - (init) Plan written from the design doc; current code confirmed (AlnRecord has no cigar; call_from_pileup:392 ungapped loop; OffsetData at ~290; keep_read at variants.rs:104). Superproject + submodule branches created on feat/cigar-indel-calling; pointer still cbff4aa. Dispatching Track 2 first.
+
+---
+
+# ADDENDUM — in-engine indel left-alignment (drops bcftools norm)
+
+**Goal (ship-blocker for embeddable/WASM):** normalize indel positions inside the
+engine so users don't pipe through `bcftools norm`.
+
+- **Submodule** `feat/cigar-indel-calling` += `fcf9d88` — `left_align_indel`
+  (standard roll-left while `REF.last()==ALT.last()` and `anchor0>0`, using the
+  reference) wired into both indel emission sites; `pos=anchor+1` re-derived
+  after the shift (anchor convention preserved). 5 pure unit tests (homopolymer
+  del/ins shift, already-aligned no-op, reference-start boundary, non-repetitive
+  no-op).
+- **Superproject** `feat/cigar-indel-calling` += `f407748` — pointer bump → fcf9d88.
+- **Branch-discipline fix:** a prior worker had left the submodule detached at
+  2f818f58; the left-align commit landed on detached HEAD. Orchestrator
+  fast-forwarded the branch to fcf9d88 and re-attached HEAD (clean ff, full
+  6-commit chain intact).
+
+**Verification (the key requirement — differential vs bcftools, not unit tests alone):**
+- `bcftools norm -f chr7.fa -m-` on the engine output: **realigned 0** lines; the
+  indel POS/REF/ALT diff vs the norm'd output is **empty (byte-identical)** across
+  all indels, including STR/homopolymer sites (AACAC>A 55159540, GAGA>G 55193108,
+  TTTTG>T 55147281). Code-review APPROVE on the shift logic + an independent
+  byte-identical differential.
+- **GIAB indel recall identical with vs without bcftools norm: 16/37 both** —
+  the engine is self-sufficient; the bcftools norm step can be dropped.
+- SNV path + already-aligned indels (55010562 GA>G) unchanged; all cnvlens-core +
+  codonsplice-core tests green.
+
+**Submodule state:** branch feat/cigar-indel-calling @ fcf9d88 (6 commits off
+cbff4aa), on-branch (not detached). Superproject pointer = fcf9d88. NOTHING PUSHED.
