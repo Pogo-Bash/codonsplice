@@ -950,7 +950,7 @@ impl Compiler {
         validate_where_fields(query)?;
 
         // 0b. `CALL header` pushes a single record, not a cursor — the
-        //     row-stream clauses (SELECT/ORDER BY/LIMIT) compile to
+        //     row-stream clauses (SELECT/ORDER BY/LIMIT/INTO) compile to
         //     cursor-consuming opcodes and would crash the VM at runtime
         //     ("expected cursor, got record"). Reject them at compile time. #21
         if query.call.as_ref().map(|c| c.operation.as_str()) == Some("header") {
@@ -970,6 +970,12 @@ impl Compiler {
                 return Err(CompileError::MaterializeOnHeader {
                     clause: "LIMIT",
                     span: limit.span(),
+                });
+            }
+            if let Some(into) = &query.into {
+                return Err(CompileError::MaterializeOnHeader {
+                    clause: "INTO",
+                    span: into.span,
                 });
             }
         }
