@@ -1208,7 +1208,7 @@ pub fn record_to_json(r: &Record) -> serde_json::Value {
         Record::CoverageWindow(w) => serde_json::to_value(w).unwrap_or(json!({})),
         Record::Alignment(a) => json!({
             "chrom": a.chrom,
-            "pos": a.aln.pos,
+            "pos": a.pos_1based(), // 1-based (SAM POS), #19
             "mapq": a.aln.mapq,
             "flag": a.aln.flag,
             "depth": a.depth,

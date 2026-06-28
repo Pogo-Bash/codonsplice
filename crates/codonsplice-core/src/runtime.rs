@@ -272,6 +272,16 @@ pub struct AlnRow {
     pub depth: i64,
 }
 
+impl AlnRow {
+    /// The read's 1-based start position (SAM POS), #19/#20. Single source of
+    /// truth for the 0->1 conversion: `aln.pos` is stored 0-based (cnvlens-core
+    /// decode + internal depth pileup), but every user-facing sink reports
+    /// 1-based to match samtools and the 1-based BAI region seek.
+    pub fn pos_1based(&self) -> i64 {
+        self.aln.pos + 1
+    }
+}
+
 /// A single genomic record exposed to the expression interpreter as named
 /// fields.
 #[derive(Debug, Clone)]
@@ -320,7 +330,7 @@ impl Record {
             ]),
             Record::Alignment(ref a) => Record::Row(vec![
                 ("chrom".into(), RuntimeValue::Str(Arc::from(a.chrom.as_str()))),
-                ("pos".into(), RuntimeValue::Int(a.aln.pos + 1)), // 1-based (SAM POS), #19/#20
+                ("pos".into(), RuntimeValue::Int(a.pos_1based())), // 1-based (SAM POS), #19/#20
                 ("mapq".into(), RuntimeValue::Int(a.aln.mapq as i64)),
                 ("flag".into(), RuntimeValue::Int(a.aln.flag as i64)),
                 ("depth".into(), RuntimeValue::Int(a.depth)),
@@ -356,7 +366,7 @@ fn aln_field(r: &AlnRow, name: &str) -> RuntimeValue {
     let flag = r.aln.flag;
     match name {
         "chr" | "chrom" => Str(Arc::from(r.chrom.as_str())),
-        "pos" => Int(r.aln.pos + 1), // 1-based (SAM POS), #19/#20
+        "pos" => Int(r.pos_1based()), // 1-based (SAM POS), #19/#20
         "mapq" => Int(r.aln.mapq as i64),
         "flag" => Int(flag as i64),
         "depth" => Int(r.depth),
