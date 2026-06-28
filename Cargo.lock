@@ -277,6 +277,7 @@ version = "0.1.6"
 dependencies = [
  "cnvlens-core",
  "flate2",
+ "noodles",
  "serde_json",
  "spliceql",
 ]
@@ -285,6 +286,7 @@ dependencies = [
 name = "codonsplice-wasm"
 version = "0.1.1"
 dependencies = [
+ "cnvlens-core",
  "codonsplice-core",
  "console_error_panic_hook",
  "js-sys",
