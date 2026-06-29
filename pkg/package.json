@@ -1,6 +1,6 @@
 {
   "name": "@codonsplice/wasm",
-  "version": "0.1.1",
+  "version": "0.5.0",
   "description": "CodonSplice — run SpliceQL genomic queries (BAM/VCF) in the browser via WASM",
   "type": "module",
   "main": "codonsplice_wasm.js",

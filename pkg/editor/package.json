@@ -1,6 +1,6 @@
 {
   "name": "@codonsplice/editor",
-  "version": "0.1.1",
+  "version": "0.5.0",
   "description": "Reusable CodeMirror 6 SpliceQL editor (syntax highlighting + IntelliSense) for the CodonSplice engine",
   "type": "module",
   "main": "index.js",

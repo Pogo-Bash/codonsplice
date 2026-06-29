@@ -1,9 +1,9 @@
 {
   "name": "@codonsplice/svelte",
-  "version": "0.1.1",
+  "version": "0.5.0",
   "type": "module",
   "main": "index.js",
-  "dependencies": { "@codonsplice/wasm": "^0.2.2", "@codonsplice/editor": "^0.1.1" },
+  "dependencies": { "@codonsplice/wasm": "^0.5.0", "@codonsplice/editor": "^0.5.0" },
   "peerDependencies": { "svelte": "*" },
   "license": "MIT"
 }
